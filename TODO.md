@@ -94,12 +94,19 @@ flowchart TD
 
 ## Phase 3：設定系統
 
-- [ ] 設計設定檔格式（可考慮相容 Ghostty 的 config 格式）
-- [ ] 字型設定（family、size、line height）
-- [ ] 色彩主題（前景、背景、ANSI 16 色 + 256 色調色盤）
-- [ ] Keybinding 自訂
-- [ ] Cursor style（block / beam / underline）
-- [ ] Padding 和 opacity 設定
+- [x] 獨立 TOML config（`~/.config/spectra/config.toml`），不與 Ghostty 共用
+- [x] TOML parser — 支援 `[section]`、`key = "value"`、`#` comments
+- [x] ConfigManager — load/save/translate to ghostty format + file watching
+- [x] Settings UI — macOS 原生 Preferences 視窗（NSToolbar: General/Appearance/Font）
+- [x] 字型設定 — family, size, line-height（Settings UI + TOML → ghostty bridge）
+- [x] 色彩主題 — theme name（Settings UI + TOML → ghostty bridge）
+- [x] Cursor style + blink（Settings UI + TOML → ghostty bridge）
+- [x] Background opacity — TOML → ghostty + window alpha
+- [x] Window padding — TOML → ghostty renderer
+- [x] Config hot-reload — file watcher + GHOSTTY_ACTION_RELOAD_CONFIG
+- [x] Settings… (Cmd+,) — 開啟 Settings UI
+- [x] Open Config File — 以系統預設編輯器開啟 TOML
+- [x] Config change 通知 — NotificationCenter propagation
 
 ## Phase 4：差異化功能
 

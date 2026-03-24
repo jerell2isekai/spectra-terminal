@@ -5,6 +5,7 @@ import GhosttyKit
 class MainWindowController: NSWindowController, NSWindowDelegate {
     private let terminal: TerminalController
     private let bridge: GhosttyBridge
+    private let configManager: ConfigManager
 
     /// Called when this window is closed and should be removed from AppDelegate's tracking.
     var onClose: (() -> Void)?
@@ -12,8 +13,9 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Shared tabbing identifier so all Spectra windows group together.
     private static let tabbingID = "com.spectra.terminal"
 
-    init(bridge: GhosttyBridge) {
+    init(bridge: GhosttyBridge, configManager: ConfigManager) {
         self.bridge = bridge
+        self.configManager = configManager
         self.terminal = TerminalController(bridge: bridge)
 
         let window = NSWindow(
@@ -48,11 +50,18 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.window?.performClose(nil)
         }
 
-        // Listen for title changes via notification (works with multiple windows)
+        // Listen for notifications (works with multiple windows)
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleTitleChange(_:)),
             name: GhosttyBridge.titleDidChange, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleConfigChange(_:)),
+            name: GhosttyBridge.configDidChange, object: nil
+        )
+
+        // Apply initial config-driven appearance
+        applyConfigAppearance()
     }
 
     required init?(coder: NSCoder) {
@@ -68,6 +77,24 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
            let notifSurface = surface as? ghostty_surface_t,
            ourSurface == notifSurface {
             window?.title = title
+        }
+    }
+
+    @objc private func handleConfigChange(_ notification: Notification) {
+        applyConfigAppearance()
+    }
+
+    /// Apply window-level visual properties from Spectra's config.
+    private func applyConfigAppearance() {
+        guard let window else { return }
+
+        let opacity = max(0.001, min(1.0, configManager.config.appearance.backgroundOpacity))
+        if opacity < 1.0 {
+            window.isOpaque = false
+            window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: opacity)
+        } else {
+            window.isOpaque = true
+            window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
         }
     }
 

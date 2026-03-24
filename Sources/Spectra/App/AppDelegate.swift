@@ -2,9 +2,10 @@ import AppKit
 import GhosttyKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Shared bridge — one ghostty_app_t for the whole app.
     let bridge = GhosttyBridge()
+    let configManager = ConfigManager()
     private var windowControllers: [MainWindowController] = []
+    private var settingsWC: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -16,9 +17,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.newWindow(nil)
         }
 
-        bridge.initialize()
-        createWindow(tabIn: nil)
+        // Initialize bridge with Spectra's own config (not ghostty's default files)
+        bridge.initialize(configManager: configManager)
 
+        // Watch config file for hot-reload
+        configManager.onChange = { [weak self] _ in
+            guard let self else { return }
+            self.bridge.reloadConfig()
+            NotificationCenter.default.post(name: GhosttyBridge.configDidChange, object: nil)
+        }
+        configManager.startWatching()
+
+        createWindow(tabIn: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -27,13 +37,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        configManager.stopWatching()
         bridge.shutdown()
     }
 
     // MARK: - Window Management
 
     func createWindow(tabIn existingWindow: NSWindow?) {
-        let wc = MainWindowController(bridge: bridge)
+        let wc = MainWindowController(bridge: bridge, configManager: configManager)
         wc.onClose = { [weak self, weak wc] in
             guard let self, let wc else { return }
             self.windowControllers.removeAll { $0 === wc }
@@ -71,6 +82,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.keyWindow?.selectPreviousTab(nil)
     }
 
+    @objc func openSettings(_ sender: Any?) {
+        if settingsWC == nil {
+            settingsWC = SettingsWindowController(configManager: configManager)
+        }
+        settingsWC?.showWindow(nil)
+        settingsWC?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc func openConfigFile(_ sender: Any?) {
+        NSWorkspace.shared.open(SpectraConfig.configFile)
+    }
+
+    @objc func reloadConfig(_ sender: Any?) {
+        configManager.reload()
+    }
+
     @objc func selectTab1(_ sender: Any?) { selectTabByIndex(0) }
     @objc func selectTab2(_ sender: Any?) { selectTabByIndex(1) }
     @objc func selectTab3(_ sender: Any?) { selectTabByIndex(2) }
@@ -97,6 +124,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Spectra", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "Open Config File", action: #selector(openConfigFile(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Reload Config", action: #selector(reloadConfig(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Spectra", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
@@ -136,7 +167,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         windowMenu.addItem(.separator())
 
-        // Cmd+1-9 for tab switching
         for i in 1...9 {
             let selector = Selector("selectTab\(i):")
             let item = NSMenuItem(title: "Tab \(i)", action: selector, keyEquivalent: "\(i)")
