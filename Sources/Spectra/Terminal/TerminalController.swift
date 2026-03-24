@@ -3,19 +3,24 @@ import AppKit
 /// Manages the lifecycle of a single terminal instance.
 ///
 /// Each tab in the app gets its own TerminalController, which owns:
-/// - A TerminalSurface (NSView with Metal layer)
-/// - A connection to GhosttyBridge for this surface
+/// - A TerminalSurface (NSView backed by libghostty Metal renderer)
+/// - A reference to the shared GhosttyBridge
 class TerminalController {
     let surface: TerminalSurface
     private let bridge: GhosttyBridge
 
+    /// Called when this terminal's surface should be closed.
+    var onClose: (() -> Void)?
+
     init(bridge: GhosttyBridge) {
         self.bridge = bridge
         self.surface = TerminalSurface(frame: .zero)
-        self.surface.bridge = bridge
+        self.surface.onClose = { [weak self] in
+            self?.onClose?()
+        }
     }
 
-    /// Attach this terminal to a container view.
+    /// Attach this terminal to a container view and create the ghostty surface.
     func attach(to containerView: NSView) {
         surface.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(surface)
@@ -25,12 +30,15 @@ class TerminalController {
             surface.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             surface.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
         ])
-        bridge.createSurface(in: surface)
+
+        if let app = bridge.app {
+            surface.createSurface(app: app)
+        }
     }
 
     /// Detach and destroy the terminal surface.
     func detach() {
-        bridge.destroySurface(for: surface)
+        surface.destroySurface()
         surface.removeFromSuperview()
     }
 

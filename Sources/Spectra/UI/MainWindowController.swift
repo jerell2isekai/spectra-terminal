@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 
 /// Main window with tab support. Each tab hosts a terminal.
 class MainWindowController: NSWindowController {
@@ -8,7 +9,6 @@ class MainWindowController: NSWindowController {
     private let contentView = NSView()
 
     struct TabItem {
-        let id: String
         let controller: TerminalController
         var title: String
     }
@@ -31,6 +31,15 @@ class MainWindowController: NSWindowController {
         super.init(window: window)
 
         window.contentView = contentView
+
+        // Set up bridge action handlers
+        bridge.onSetTitle = { [weak self] surface, title in
+            self?.handleSetTitle(surface: surface, title: title)
+        }
+        bridge.onNewTab = { [weak self] in
+            self?.createTab()
+        }
+
         bridge.initialize()
         createTab()
     }
@@ -43,35 +52,36 @@ class MainWindowController: NSWindowController {
 
     private func createTab() {
         let terminal = TerminalController(bridge: bridge)
-        let id = "tab-\(Date().timeIntervalSince1970)-\(tabs.count)"
-        let tab = TabItem(id: id, controller: terminal, title: "Terminal \(tabs.count + 1)")
+        let tab = TabItem(controller: terminal, title: "Terminal \(tabs.count + 1)")
+
+        terminal.onClose = { [weak self] in
+            self?.closeTabForController(terminal)
+        }
+
         tabs.append(tab)
         activeTabIndex = tabs.count - 1
         showActiveTab()
     }
 
     private func showActiveTab() {
-        // Remove all subviews
-        contentView.subviews.forEach { $0.removeFromSuperview() }
-
         guard activeTabIndex < tabs.count else { return }
-        let tab = tabs[activeTabIndex]
-        tab.controller.attach(to: contentView)
-        tab.controller.focus()
-        window?.title = tab.title
-    }
 
-    @objc func newTab(_ sender: Any?) {
-        createTab()
-    }
-
-    @objc func closeTab(_ sender: Any?) {
-        guard !tabs.isEmpty else {
-            window?.close()
-            return
+        // Hide all surfaces (don't remove — surface lifecycle is separate from view hierarchy)
+        for (i, tab) in tabs.enumerated() {
+            if i == activeTabIndex {
+                tab.controller.attach(to: contentView)
+                tab.controller.focus()
+            } else {
+                tab.controller.surface.isHidden = true
+            }
         }
 
-        let tab = tabs.remove(at: activeTabIndex)
+        window?.title = tabs[activeTabIndex].title
+    }
+
+    private func closeTabForController(_ controller: TerminalController) {
+        guard let idx = tabs.firstIndex(where: { $0.controller === controller }) else { return }
+        let tab = tabs.remove(at: idx)
         tab.controller.detach()
 
         if tabs.isEmpty {
@@ -80,6 +90,34 @@ class MainWindowController: NSWindowController {
             activeTabIndex = min(activeTabIndex, tabs.count - 1)
             showActiveTab()
         }
+    }
+
+    // MARK: - Bridge Action Handlers
+
+    private func handleSetTitle(surface: ghostty_surface_t, title: String) {
+        for i in 0..<tabs.count {
+            if tabs[i].controller.surface.surface == surface {
+                tabs[i].title = title
+                if i == activeTabIndex {
+                    window?.title = title
+                }
+                break
+            }
+        }
+    }
+
+    // MARK: - Menu Actions
+
+    @objc func newTab(_ sender: Any?) {
+        createTab()
+    }
+
+    @objc func closeTab(_ sender: Any?) {
+        guard activeTabIndex < tabs.count else {
+            window?.close()
+            return
+        }
+        closeTabForController(tabs[activeTabIndex].controller)
     }
 
     deinit {

@@ -21,11 +21,20 @@ let package = Package(
             path: "Sources/Spectra",
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("CoreFoundation"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Foundation"),
+                .linkedFramework("IOKit"),
                 .linkedFramework("Metal"),
                 .linkedFramework("QuartzCore"),
+                .linkedFramework("Security"),
                 // libghostty static library (built by scripts/build-ghostty.sh)
-                .unsafeFlags(["-L../lib"]),
+                // Uses Context.packageDirectory for reliable path resolution in SPM build sandbox
+                .unsafeFlags(["-L\(Context.packageDirectory)/lib"]),
                 .linkedLibrary("ghostty"),
+                // libghostty includes C++ dependencies (SPIRV-Cross, glslang)
+                .linkedLibrary("c++"),
             ]
         ),
     ]
