@@ -13,6 +13,11 @@ class TerminalSurface: NSView, NSTextInputClient {
     /// Called when libghostty requests this surface be closed.
     var onClose: (() -> Void)?
 
+    // MARK: - Working Directory
+
+    /// Current working directory reported by the shell via OSC 7.
+    var currentWorkingDirectory: String?
+
     // MARK: - IME State
 
     /// Stores the current IME composition (preedit) text.
@@ -37,7 +42,7 @@ class TerminalSurface: NSView, NSTextInputClient {
 
     // MARK: - Surface Lifecycle
 
-    func createSurface(app: ghostty_app_t) {
+    func createSurface(app: ghostty_app_t, workingDirectory: String? = nil) {
         guard self.surface == nil else { return }
 
         var cfg = ghostty_surface_config_new()
@@ -49,10 +54,41 @@ class TerminalSurface: NSView, NSTextInputClient {
         cfg.font_size = 0
         cfg.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
-        self.surface = ghostty_surface_new(app, &cfg)
+        if let wd = workingDirectory {
+            wd.withCString { cStr in
+                cfg.working_directory = cStr
+                self.surface = ghostty_surface_new(app, &cfg)
+            }
+        } else {
+            self.surface = ghostty_surface_new(app, &cfg)
+        }
         if self.surface == nil {
             print("[TerminalSurface] ghostty_surface_new() failed")
         }
+    }
+
+    /// Send a command to the terminal (text + Enter key event).
+    func sendCommand(_ command: String) {
+        guard let surface else { return }
+        // Send command text
+        command.withCString { cStr in
+            ghostty_surface_text(surface, cStr, UInt(command.utf8.count))
+        }
+        // Send Return key press (macOS keycode 36)
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = GHOSTTY_ACTION_PRESS
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+        keyEvent.keycode = 36
+        keyEvent.composing = false
+        "\r".withCString { cStr in
+            keyEvent.text = cStr
+            _ = ghostty_surface_key(surface, keyEvent)
+        }
+        // Send Return key release
+        keyEvent.action = GHOSTTY_ACTION_RELEASE
+        keyEvent.text = nil
+        _ = ghostty_surface_key(surface, keyEvent)
     }
 
     func destroySurface() {
@@ -72,6 +108,7 @@ class TerminalSurface: NSView, NSTextInputClient {
 
     override func becomeFirstResponder() -> Bool {
         if let surface { ghostty_surface_set_focus(surface, true) }
+        NotificationCenter.default.post(name: .terminalSurfaceDidFocus, object: self)
         return true
     }
 
@@ -231,6 +268,11 @@ class TerminalSurface: NSView, NSTextInputClient {
         nil
     }
 
+    override func doCommand(by selector: Selector) {
+        // Intentionally empty — suppress NSBeep for unhandled selectors.
+        // The terminal handles all keyboard input via ghostty_surface_key/text.
+    }
+
     func validAttributesForMarkedText() -> [NSAttributedString.Key] {
         []
     }
@@ -299,10 +341,10 @@ class TerminalSurface: NSView, NSTextInputClient {
             ? "Enter a name for this layout:"
             : "Enter a new name, or pick an existing layout to overwrite:"
 
-        // Fixed-size container with popup + text field
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 60))
+        // Fixed-size container with popup + text field + checkboxes
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 112))
 
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 32, width: 260, height: 25))
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 84, width: 260, height: 25))
         popup.addItem(withTitle: "New layout")
         for name in existing {
             popup.addItem(withTitle: "Overwrite: \(name)")
@@ -310,16 +352,33 @@ class TerminalSurface: NSView, NSTextInputClient {
         }
         container.addSubview(popup)
 
-        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 54, width: 260, height: 24))
         nameField.placeholderString = "e.g. dev-2col"
         container.addSubview(nameField)
+
+        let savePathsCheck = NSButton(checkboxWithTitle: "Save working directories",
+                                       target: nil, action: nil)
+        savePathsCheck.frame = NSRect(x: 0, y: 26, width: 260, height: 22)
+        savePathsCheck.state = .on
+        container.addSubview(savePathsCheck)
+
+        let saveSidebarCheck = NSButton(checkboxWithTitle: "Save sidebar directory",
+                                         target: nil, action: nil)
+        saveSidebarCheck.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
+        saveSidebarCheck.state = .on
+        container.addSubview(saveSidebarCheck)
 
         alert.accessoryView = container
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: win) { response in
             guard response == .alertFirstButtonReturn else { return }
-            let layout = wc.splitVC.captureLayout()
+            let savePaths = savePathsCheck.state == .on
+            var layout = wc.splitVC.captureLayout(savePaths: savePaths)
+            if saveSidebarCheck.state == .on {
+                layout.sidebarDirectory = wc.sidebarRootPath
+                layout.sidebarOpen = wc.isSidebarOpen
+            }
 
             if let overwriteName = popup.selectedItem?.representedObject as? String {
                 SplitLayoutStore.save(layout: layout, name: overwriteName)
@@ -357,6 +416,13 @@ class TerminalSurface: NSView, NSTextInputClient {
             if response == .alertFirstButtonReturn {
                 guard let layout = SplitLayoutStore.load(name: name) else { return }
                 wc.splitVC.applyLayout(layout)
+                if let sidebarDir = layout.sidebarDirectory {
+                    wc.setSidebarRootDirectory(sidebarDir)
+                }
+                if let sidebarOpen = layout.sidebarOpen {
+                    wc.setSidebarOpen(sidebarOpen)
+                    UserDefaults.standard.set(sidebarOpen, forKey: "sidebarOpen")
+                }
             } else if response == .alertSecondButtonReturn {
                 SplitLayoutStore.delete(name: name)
             }

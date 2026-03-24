@@ -169,6 +169,27 @@ class SplitViewController: NSViewController {
         super.viewDidLoad()
         installRootView()
         setupTerminalCallbacks(for: allTerminals())
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSurfaceFocus(_:)),
+            name: .terminalSurfaceDidFocus, object: nil
+        )
+    }
+
+    @objc private func handleSurfaceFocus(_ notification: Notification) {
+        guard let surface = notification.object as? TerminalSurface else { return }
+        if let tc = allTerminals().first(where: { $0.surface === surface }) {
+            setExclusiveFocus(tc)
+        }
+    }
+
+    /// Ensure only one terminal has ghostty focus.
+    private func setExclusiveFocus(_ target: TerminalController) {
+        focusedTerminal = target
+        for tc in allTerminals() {
+            if let s = tc.surface.surface {
+                ghostty_surface_set_focus(s, tc === target)
+            }
+        }
     }
 
     // MARK: - Public API
@@ -195,7 +216,7 @@ class SplitViewController: NSViewController {
             newTerminal.surface.createSurface(app: app)
         }
 
-        focusedTerminal = newTerminal
+        setExclusiveFocus(newTerminal)
         newTerminal.focus()
     }
 
@@ -210,9 +231,9 @@ class SplitViewController: NSViewController {
         rootNode = removeFromTree(rootNode, target: terminal)
         reinstallViews()
 
-        if focusedTerminal === terminal {
-            focusedTerminal = allTerminals().first
-            focusedTerminal?.focus()
+        if focusedTerminal === terminal, let next = allTerminals().first {
+            setExclusiveFocus(next)
+            next.focus()
         }
     }
 
@@ -228,8 +249,8 @@ class SplitViewController: NSViewController {
         default:                           newIdx = (idx + 1) % all.count
         }
 
-        focusedTerminal = all[newIdx]
-        focusedTerminal?.focus()
+        setExclusiveFocus(all[newIdx])
+        all[newIdx].focus()
     }
 
     func allTerminals() -> [TerminalController] {
@@ -238,47 +259,67 @@ class SplitViewController: NSViewController {
 
     // MARK: - Layout Capture / Apply
 
-    func captureLayout() -> SplitLayoutStore.Layout {
-        SplitLayoutStore.Layout(root: captureNode(rootNode))
+    func captureLayout(savePaths: Bool = false) -> SplitLayoutStore.Layout {
+        SplitLayoutStore.Layout(root: captureNode(rootNode, savePaths: savePaths))
     }
 
-    private func captureNode(_ node: SplitNode) -> SplitLayoutStore.Layout.Node {
+    private func captureNode(_ node: SplitNode, savePaths: Bool) -> SplitLayoutStore.Layout.Node {
         switch node {
-        case .terminal: return .terminal
+        case .terminal(let tc):
+            let wd = savePaths ? tc.surface.currentWorkingDirectory : nil
+            return .terminal(workingDirectory: wd)
         case .split(let container, let dir, let first, let second):
             return .split(direction: dir == .horizontal ? "horizontal" : "vertical",
                           ratio: Double(container.ratio),
-                          children: [captureNode(first), captureNode(second)])
+                          children: [captureNode(first, savePaths: savePaths),
+                                     captureNode(second, savePaths: savePaths)])
         }
     }
 
     func applyLayout(_ layout: SplitLayoutStore.Layout) {
+        // Detach all existing terminals — layout load always creates fresh surfaces
+        // so working_directory is set correctly via ghostty native API.
         for tc in allTerminals() { tc.detach() }
-        rootNode = buildNodeFromLayout(layout.root)
+        var paths: [ObjectIdentifier: String] = [:]
+        rootNode = buildNodeFromLayout(layout.root, paths: &paths)
         reinstallViews()
         setupTerminalCallbacks(for: allTerminals())
         if let app = bridge.app {
-            for tc in allTerminals() { tc.surface.createSurface(app: app) }
+            for tc in allTerminals() {
+                let wd = paths[ObjectIdentifier(tc)]
+                tc.surface.createSurface(app: app, workingDirectory: wd)
+            }
         }
-        focusedTerminal = allTerminals().first
-        focusedTerminal?.focus()
+        if let first = allTerminals().first {
+            setExclusiveFocus(first)
+            first.focus()
+        }
     }
 
-    private func buildNodeFromLayout(_ layoutNode: SplitLayoutStore.Layout.Node) -> SplitNode {
+    private func buildNodeFromLayout(_ layoutNode: SplitLayoutStore.Layout.Node,
+                                      paths: inout [ObjectIdentifier: String]) -> SplitNode {
         switch layoutNode {
-        case .terminal:
-            return .terminal(TerminalController(bridge: bridge))
+        case .terminal(let wd):
+            let tc = TerminalController(bridge: bridge)
+            if let path = wd {
+                paths[ObjectIdentifier(tc)] = path
+            }
+            return .terminal(tc)
         case .split(let dirStr, let ratio, let children):
             let dir: Direction = dirStr == "horizontal" ? .horizontal : .vertical
-            let first = buildNodeFromLayout(children.count > 0 ? children[0] : .terminal)
-            let second = buildNodeFromLayout(children.count > 1 ? children[1] : .terminal)
+            let first = buildNodeFromLayout(children.count > 0 ? children[0] : .terminal(), paths: &paths)
+            let second = buildNodeFromLayout(children.count > 1 ? children[1] : .terminal(), paths: &paths)
             let node = makeSplitNode(direction: dir, first: first, second: second)
-            // Apply the saved ratio
             if case .split(let container, _, _, _) = node {
                 container.ratio = CGFloat(ratio)
             }
             return node
         }
+    }
+
+    /// Escape a path for safe use in a shell command.
+    private static func shellEscape(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: - Internal

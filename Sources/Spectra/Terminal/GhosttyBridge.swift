@@ -211,6 +211,19 @@ class GhosttyBridge {
         case GHOSTTY_ACTION_MOUSE_VISIBILITY:
             return false
 
+        case GHOSTTY_ACTION_PWD:
+            if let cPwd = action.action.pwd.pwd, target.tag == GHOSTTY_TARGET_SURFACE {
+                let pwd = String(cString: cPwd)
+                let surfaceHandle = target.target.surface
+                DispatchQueue.main.async {
+                    if let ud = ghostty_surface_userdata(surfaceHandle) {
+                        let ts = Unmanaged<TerminalSurface>.fromOpaque(ud).takeUnretainedValue()
+                        ts.currentWorkingDirectory = pwd
+                    }
+                }
+            }
+            return true
+
         case GHOSTTY_ACTION_RING_BELL:
             NSSound.beep()
             return true

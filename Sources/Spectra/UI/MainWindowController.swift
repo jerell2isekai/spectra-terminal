@@ -47,8 +47,9 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.contentViewController = workspaceVC
 
-        // Start with sidebar collapsed by default
-        workspaceVC.setSidebarCollapsed(true, animated: false)
+        // Restore sidebar state from last session
+        let sidebarWasOpen = UserDefaults.standard.bool(forKey: "sidebarOpen")
+        workspaceVC.setSidebarCollapsed(!sidebarWasOpen, animated: false)
 
         // Setup toolbar
         setupToolbar()
@@ -105,10 +106,37 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     func splitRight() { splitVC.split(direction: .horizontal) }
     func splitDown() { splitVC.split(direction: .vertical) }
 
+    /// Current sidebar root directory path (nil if not set).
+    var sidebarRootPath: String? {
+        sidebarVC.rootURL?.path
+    }
+
+    /// Set the sidebar's root directory.
+    func setSidebarRootDirectory(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path) else { return }
+        sidebarVC.setRootDirectory(url)
+    }
+
+    /// Whether the sidebar is currently open.
+    var isSidebarOpen: Bool {
+        !workspaceVC.isSidebarCollapsed
+    }
+
+    /// Set sidebar open/closed state.
+    func setSidebarOpen(_ open: Bool, animated: Bool = true) {
+        workspaceVC.setSidebarCollapsed(!open, animated: animated)
+    }
+
     // MARK: - Sidebar Actions
 
     @objc func toggleSidebarAction(_ sender: Any?) {
         workspaceVC.toggleSidebar(sender)
+        // Persist sidebar state after toggle animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            UserDefaults.standard.set(self.isSidebarOpen, forKey: "sidebarOpen")
+        }
     }
 
     // MARK: - Notifications

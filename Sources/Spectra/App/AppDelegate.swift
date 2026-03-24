@@ -63,6 +63,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - App Icon
 
     private func setupAppIcon() {
+        // When running from .app bundle, CFBundleIconFile handles the icon
+        // with proper squircle mask. Only set programmatically for bare executable (dev mode).
+        if Bundle.main.bundlePath.hasSuffix(".app") { return }
         if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon

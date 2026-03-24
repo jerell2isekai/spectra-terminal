@@ -22,7 +22,7 @@ class SidebarViewController: NSViewController {
 
     // MARK: - State
     private var rootNode: FileNode?
-    private var rootURL: URL?
+    private(set) var rootURL: URL?
     private var cachedGitStatuses: [String: FileNode.GitStatus] = [:]
     private var gitStatusGeneration: Int = 0
     private var discoveredRepos: [GitStatusProvider.RepoInfo] = []
@@ -664,4 +664,5 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
 extension Notification.Name {
     static let sidebarOpenFilePreview = Notification.Name("sidebarOpenFilePreview")
     static let sidebarOpenDiff = Notification.Name("sidebarOpenDiff")
+    static let terminalSurfaceDidFocus = Notification.Name("terminalSurfaceDidFocus")
 }
