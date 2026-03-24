@@ -117,11 +117,13 @@ class SplitContainerView: NSView {
 // MARK: - SplitViewController
 
 /// Manages a recursive tree of terminal splits within a single window.
+/// Each leaf node is a PaneTabController that can host multiple terminal tabs.
 class SplitViewController: NSViewController {
     private let bridge: GhosttyBridge
     private let configManager: ConfigManager
     private var rootNode: SplitNode
     private(set) var focusedTerminal: TerminalController?
+    private(set) var focusedPane: PaneTabController?
 
     var onSurfaceClose: ((_ terminal: TerminalController) -> Void)?
 
@@ -131,21 +133,29 @@ class SplitViewController: NSViewController {
     }
 
     indirect enum SplitNode {
-        case terminal(TerminalController)
+        case pane(PaneTabController)
         case split(SplitContainerView, direction: Direction, first: SplitNode, second: SplitNode)
 
         var view: NSView {
             switch self {
-            case .terminal(let tc): return tc.surface
+            case .pane(let ptc): return ptc.containerView
             case .split(let container, _, _, _): return container
             }
         }
 
         func allTerminals() -> [TerminalController] {
             switch self {
-            case .terminal(let tc): return [tc]
+            case .pane(let ptc): return ptc.allTerminals()
             case .split(_, _, let first, let second):
                 return first.allTerminals() + second.allTerminals()
+            }
+        }
+
+        func allPanes() -> [PaneTabController] {
+            switch self {
+            case .pane(let ptc): return [ptc]
+            case .split(_, _, let first, let second):
+                return first.allPanes() + second.allPanes()
             }
         }
     }
@@ -153,13 +163,18 @@ class SplitViewController: NSViewController {
     init(bridge: GhosttyBridge, configManager: ConfigManager) {
         self.bridge = bridge
         self.configManager = configManager
-        let initial = TerminalController(bridge: bridge)
-        self.rootNode = .terminal(initial)
-        self.focusedTerminal = initial
+        let initial = PaneTabController(bridge: bridge)
+        initial.addTab()
+        self.rootNode = .pane(initial)
+        self.focusedTerminal = initial.activeTerminal
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     override func loadView() {
         self.view = NSView()
@@ -168,7 +183,7 @@ class SplitViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         installRootView()
-        setupTerminalCallbacks(for: allTerminals())
+        setupPaneCallbacks(for: allPanes())
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSurfaceFocus(_:)),
             name: .terminalSurfaceDidFocus, object: nil
@@ -177,84 +192,150 @@ class SplitViewController: NSViewController {
 
     @objc private func handleSurfaceFocus(_ notification: Notification) {
         guard let surface = notification.object as? TerminalSurface else { return }
-        if let tc = allTerminals().first(where: { $0.surface === surface }) {
-            setExclusiveFocus(tc)
+        // Find both terminal and its pane in one pass
+        for ptc in allPanes() {
+            if let tc = ptc.allTerminals().first(where: { $0.surface === surface }) {
+                setExclusiveFocus(tc, in: ptc)
+                return
+            }
         }
     }
 
     /// Ensure only one terminal has ghostty focus.
-    private func setExclusiveFocus(_ target: TerminalController) {
+    /// O(1) — only toggles the previous and new focus target.
+    private func setExclusiveFocus(_ target: TerminalController, in pane: PaneTabController? = nil) {
+        let old = focusedTerminal
         focusedTerminal = target
-        for tc in allTerminals() {
-            if let s = tc.surface.surface {
-                ghostty_surface_set_focus(s, tc === target)
-            }
+        focusedPane = pane ?? allPanes().first { $0.allTerminals().contains(where: { $0 === target }) }
+
+        // Unfocus previous (if different)
+        if let old = old, old !== target, let s = old.surface.surface {
+            ghostty_surface_set_focus(s, false)
+        }
+        // Focus new
+        if let s = target.surface.surface {
+            ghostty_surface_set_focus(s, true)
         }
     }
 
     // MARK: - Public API
 
     func split(direction: Direction) {
-        guard let focused = focusedTerminal else { return }
+        guard focusedTerminal != nil,
+              let currentPTC = focusedPane else { return }
 
-        let newTerminal = TerminalController(bridge: bridge)
-        setupTerminalCallbacks(for: [newTerminal])
+        let newPTC = PaneTabController(bridge: bridge)
+        newPTC.addTab()
+        setupPaneCallbacks(for: [newPTC])
 
-        // Rebuild tree: old leaf becomes a split with old + new
         rootNode = rebuildTree(rootNode) { node in
-            if case .terminal(let tc) = node, tc === focused {
+            if case .pane(let ptc) = node, ptc === currentPTC {
                 return makeSplitNode(direction: direction,
-                                     first: .terminal(tc),
-                                     second: .terminal(newTerminal))
+                                     first: .pane(ptc),
+                                     second: .pane(newPTC))
             }
-            return nil  // no change
+            return nil
         }
 
         reinstallViews()
 
         if let app = bridge.app {
-            newTerminal.surface.createSurface(app: app)
+            newPTC.createSurfaces(app: app)
         }
 
-        setExclusiveFocus(newTerminal)
-        newTerminal.focus()
+        setExclusiveFocus(newPTC.activeTerminal, in: newPTC)
+        newPTC.activeTerminal.focus()
     }
 
-    func closeTerminal(_ terminal: TerminalController) {
-        let all = allTerminals()
-        if all.count <= 1 {
-            onSurfaceClose?(terminal)
+    /// Close an entire pane (all its tabs) from the tree.
+    func closePaneTab(_ ptc: PaneTabController) {
+        let panes = allPanes()
+        if panes.count <= 1 {
+            onSurfaceClose?(ptc.activeTerminal)
             return
         }
 
-        terminal.detach()
-        rootNode = removeFromTree(rootNode, target: terminal)
+        // Find the nearest sibling before removing from tree
+        let sibling = findSibling(of: ptc, in: rootNode)
+
+        ptc.detachAll()
+        rootNode = removeFromTree(rootNode, target: ptc)
         reinstallViews()
 
-        if focusedTerminal === terminal, let next = allTerminals().first {
-            setExclusiveFocus(next)
+        let nextPTC = sibling ?? allPanes().first
+        if let next = nextPTC?.activeTerminal {
+            setExclusiveFocus(next, in: nextPTC)
             next.focus()
         }
     }
 
+    /// Add a new tab to the focused pane.
+    func newPaneTab() {
+        guard focusedTerminal != nil,
+              let ptc = focusedPane else { return }
+        let tc = ptc.addTab()
+        if let app = bridge.app {
+            tc.surface.createSurface(app: app)
+        }
+        setExclusiveFocus(tc, in: ptc)
+        tc.focus()
+    }
+
+    /// Close the focused tab (or pane if it's the last tab).
+    func closeCurrentPaneTab() {
+        guard let focused = focusedTerminal,
+              let ptc = focusedPane,
+              let idx = ptc.tabs.firstIndex(where: { $0 === focused }) else { return }
+        ptc.closeTab(at: idx)
+    }
+
+    /// Navigate to next/previous tab within the focused pane.
+    func nextPaneTab() {
+        guard let ptc = focusedPane else { return }
+        ptc.selectNextTab()
+        setExclusiveFocus(ptc.activeTerminal, in: ptc)
+        ptc.activeTerminal.focus()
+    }
+
+    func previousPaneTab() {
+        guard let ptc = focusedPane else { return }
+        ptc.selectPreviousTab()
+        setExclusiveFocus(ptc.activeTerminal, in: ptc)
+        ptc.activeTerminal.focus()
+    }
+
+    /// Navigate between split panes (cycles through active tab of each pane).
     func focusSplit(_ direction: ghostty_action_goto_split_e) {
-        let all = allTerminals()
-        guard all.count > 1, let focused = focusedTerminal,
-              let idx = all.firstIndex(where: { $0 === focused }) else { return }
+        let panes = allPanes()
+        guard panes.count > 1, let currentPane = focusedPane,
+              let idx = panes.firstIndex(where: { $0 === currentPane }) else { return }
 
         let newIdx: Int
         switch direction {
-        case GHOSTTY_GOTO_SPLIT_NEXT:     newIdx = (idx + 1) % all.count
-        case GHOSTTY_GOTO_SPLIT_PREVIOUS: newIdx = (idx - 1 + all.count) % all.count
-        default:                           newIdx = (idx + 1) % all.count
+        case GHOSTTY_GOTO_SPLIT_NEXT:     newIdx = (idx + 1) % panes.count
+        case GHOSTTY_GOTO_SPLIT_PREVIOUS: newIdx = (idx - 1 + panes.count) % panes.count
+        default:                           newIdx = (idx + 1) % panes.count
         }
 
-        setExclusiveFocus(all[newIdx])
-        all[newIdx].focus()
+        let nextPane = panes[newIdx]
+        let target = nextPane.activeTerminal
+        setExclusiveFocus(target, in: nextPane)
+        target.focus()
     }
 
     func allTerminals() -> [TerminalController] {
         rootNode.allTerminals()
+    }
+
+    func allPanes() -> [PaneTabController] {
+        rootNode.allPanes()
+    }
+
+    /// Find the PaneTabController that contains a given terminal.
+    func findPaneTab(containing tc: TerminalController) -> PaneTabController? {
+        allPanes().first { ptc in
+            ptc.allTerminals().contains(where: { $0 === tc })
+        }
     }
 
     // MARK: - Layout Capture / Apply
@@ -265,9 +346,12 @@ class SplitViewController: NSViewController {
 
     private func captureNode(_ node: SplitNode, savePaths: Bool) -> SplitLayoutStore.Layout.Node {
         switch node {
-        case .terminal(let tc):
-            let wd = savePaths ? tc.surface.currentWorkingDirectory : nil
-            return .terminal(workingDirectory: wd)
+        case .pane(let ptc):
+            let tabs = ptc.tabs.map { tc -> TabInfo in
+                let wd = savePaths ? tc.surface.currentWorkingDirectory : nil
+                return TabInfo(workingDirectory: wd)
+            }
+            return .terminal(tabs: tabs, activeTabIndex: ptc.activeTabIndex)
         case .split(let container, let dir, let first, let second):
             return .split(direction: dir == .horizontal ? "horizontal" : "vertical",
                           ratio: Double(container.ratio),
@@ -277,49 +361,52 @@ class SplitViewController: NSViewController {
     }
 
     func applyLayout(_ layout: SplitLayoutStore.Layout) {
-        // Detach all existing terminals — layout load always creates fresh surfaces
-        // so working_directory is set correctly via ghostty native API.
-        for tc in allTerminals() { tc.detach() }
+        // Detach all existing terminals
+        for ptc in allPanes() { ptc.detachAll() }
         var paths: [ObjectIdentifier: String] = [:]
         rootNode = buildNodeFromLayout(layout.root, paths: &paths)
         reinstallViews()
-        setupTerminalCallbacks(for: allTerminals())
+        setupPaneCallbacks(for: allPanes())
         if let app = bridge.app {
             for tc in allTerminals() {
                 let wd = paths[ObjectIdentifier(tc)]
                 tc.surface.createSurface(app: app, workingDirectory: wd)
             }
         }
-        if let first = allTerminals().first {
-            setExclusiveFocus(first)
-            first.focus()
+        if let firstPane = allPanes().first {
+            setExclusiveFocus(firstPane.activeTerminal, in: firstPane)
+            firstPane.activeTerminal.focus()
         }
     }
 
     private func buildNodeFromLayout(_ layoutNode: SplitLayoutStore.Layout.Node,
                                       paths: inout [ObjectIdentifier: String]) -> SplitNode {
         switch layoutNode {
-        case .terminal(let wd):
-            let tc = TerminalController(bridge: bridge)
-            if let path = wd {
-                paths[ObjectIdentifier(tc)] = path
+        case .terminal(let tabInfos, let activeIndex):
+            let ptc = PaneTabController(bridge: bridge)
+            for info in tabInfos {
+                let tc = ptc.addTab()
+                if let wd = info.workingDirectory {
+                    paths[ObjectIdentifier(tc)] = wd
+                }
             }
-            return .terminal(tc)
+            if tabInfos.isEmpty {
+                ptc.addTab()
+            }
+            if activeIndex < ptc.tabs.count {
+                ptc.selectTab(at: activeIndex)
+            }
+            return .pane(ptc)
         case .split(let dirStr, let ratio, let children):
             let dir: Direction = dirStr == "horizontal" ? .horizontal : .vertical
-            let first = buildNodeFromLayout(children.count > 0 ? children[0] : .terminal(), paths: &paths)
-            let second = buildNodeFromLayout(children.count > 1 ? children[1] : .terminal(), paths: &paths)
+            let first = buildNodeFromLayout(children.count > 0 ? children[0] : .terminal(tabs: [.init()]), paths: &paths)
+            let second = buildNodeFromLayout(children.count > 1 ? children[1] : .terminal(tabs: [.init()]), paths: &paths)
             let node = makeSplitNode(direction: dir, first: first, second: second)
             if case .split(let container, _, _, _) = node {
                 container.ratio = CGFloat(ratio)
             }
             return node
         }
-    }
-
-    /// Escape a path for safe use in a shell command.
-    private static func shellEscape(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: - Internal
@@ -342,11 +429,11 @@ class SplitViewController: NSViewController {
         installRootView()
     }
 
-    private func setupTerminalCallbacks(for terminals: [TerminalController]) {
-        for tc in terminals {
-            tc.onClose = { [weak self, weak tc] in
-                guard let self, let tc else { return }
-                self.closeTerminal(tc)
+    private func setupPaneCallbacks(for panes: [PaneTabController]) {
+        for ptc in panes {
+            ptc.onClose = { [weak self, weak ptc] in
+                guard let self, let ptc else { return }
+                self.closePaneTab(ptc)
             }
         }
     }
@@ -357,14 +444,12 @@ class SplitViewController: NSViewController {
         return .split(container, direction: direction, first: first, second: second)
     }
 
-    /// Walk the tree, applying a transform function. If the transform returns a node, use it; otherwise recurse.
+    /// Walk the tree, applying a transform function.
     private func rebuildTree(_ node: SplitNode, transform: (SplitNode) -> SplitNode?) -> SplitNode {
-        // Try to transform this node directly
         if let result = transform(node) { return result }
 
-        // Otherwise recurse into splits
         switch node {
-        case .terminal:
+        case .pane:
             return node
         case .split(_, let dir, let first, let second):
             let newFirst = rebuildTree(first, transform: transform)
@@ -373,14 +458,34 @@ class SplitViewController: NSViewController {
         }
     }
 
-    /// Remove a terminal from the tree, collapsing its parent split to the surviving sibling.
-    private func removeFromTree(_ node: SplitNode, target: TerminalController) -> SplitNode {
+    /// Find the nearest sibling pane of the target in the tree.
+    /// Returns the closest pane from the other branch of the parent split.
+    private func findSibling(of target: PaneTabController, in node: SplitNode) -> PaneTabController? {
         switch node {
-        case .terminal:
+        case .pane:
+            return nil
+        case .split(_, _, let first, let second):
+            // If target is a direct child, return the nearest pane from the other side
+            if case .pane(let ptc) = first, ptc === target {
+                return second.allPanes().first
+            }
+            if case .pane(let ptc) = second, ptc === target {
+                return first.allPanes().last
+            }
+            // Recurse into children
+            if let result = findSibling(of: target, in: first) { return result }
+            return findSibling(of: target, in: second)
+        }
+    }
+
+    /// Remove a pane from the tree, collapsing its parent split to the surviving sibling.
+    private func removeFromTree(_ node: SplitNode, target: PaneTabController) -> SplitNode {
+        switch node {
+        case .pane:
             return node
         case .split(_, _, let first, let second):
-            if case .terminal(let tc) = first, tc === target { return second }
-            if case .terminal(let tc) = second, tc === target { return first }
+            if case .pane(let ptc) = first, ptc === target { return second }
+            if case .pane(let ptc) = second, ptc === target { return first }
             let newFirst = removeFromTree(first, target: target)
             let newSecond = removeFromTree(second, target: target)
             return makeSplitNode(direction: {

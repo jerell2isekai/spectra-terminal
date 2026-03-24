@@ -195,8 +195,8 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        for tc in splitVC.allTerminals() {
-            tc.detach()
+        for ptc in splitVC.allPanes() {
+            ptc.detachAll()
         }
         onClose?()
     }

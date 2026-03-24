@@ -1,11 +1,16 @@
 import Foundation
 
+/// Per-tab metadata for layout serialization.
+struct TabInfo: Codable {
+    var workingDirectory: String?
+}
+
 /// Persists and restores named split layouts as JSON files in ~/.config/spectra/layouts/.
 enum SplitLayoutStore {
-    /// A serializable split layout tree — includes ratio for each split.
+    /// A serializable split layout tree with per-pane tab support.
     struct Layout: Codable {
         enum Node {
-            case terminal(workingDirectory: String? = nil)
+            case terminal(tabs: [TabInfo], activeTabIndex: Int = 0)
             case split(direction: String, ratio: Double, children: [Node])
         }
         var root: Node
@@ -54,14 +59,19 @@ enum SplitLayoutStore {
     }
 }
 
-// MARK: - Custom Codable (backward compatible with old layouts without workingDirectory)
+// MARK: - Custom Codable (backward compatible with old single-terminal layouts)
 
 extension SplitLayoutStore.Layout.Node: Codable {
     private enum TopKeys: String, CodingKey {
         case terminal, split
     }
-    private enum TerminalKeys: String, CodingKey {
+    // Old format keys
+    private enum OldTerminalKeys: String, CodingKey {
         case workingDirectory
+    }
+    // New format keys
+    private enum NewTerminalKeys: String, CodingKey {
+        case tabs, activeTabIndex
     }
     private enum SplitKeys: String, CodingKey {
         case direction, ratio, children
@@ -70,11 +80,20 @@ extension SplitLayoutStore.Layout.Node: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: TopKeys.self)
         if container.contains(.terminal) {
-            if let nested = try? container.nestedContainer(keyedBy: TerminalKeys.self, forKey: .terminal),
-               let wd = try? nested.decodeIfPresent(String.self, forKey: .workingDirectory) {
-                self = .terminal(workingDirectory: wd)
-            } else {
-                self = .terminal()
+            // Try new format first (tabs array)
+            if let nested = try? container.nestedContainer(keyedBy: NewTerminalKeys.self, forKey: .terminal),
+               let tabs = try? nested.decode([TabInfo].self, forKey: .tabs) {
+                let activeIndex = (try? nested.decode(Int.self, forKey: .activeTabIndex)) ?? 0
+                self = .terminal(tabs: tabs, activeTabIndex: activeIndex)
+            }
+            // Fall back to old format (single workingDirectory)
+            else if let nested = try? container.nestedContainer(keyedBy: OldTerminalKeys.self, forKey: .terminal) {
+                let wd = try? nested.decodeIfPresent(String.self, forKey: .workingDirectory)
+                self = .terminal(tabs: [TabInfo(workingDirectory: wd)], activeTabIndex: 0)
+            }
+            // Empty terminal
+            else {
+                self = .terminal(tabs: [TabInfo()], activeTabIndex: 0)
             }
         } else if container.contains(.split) {
             let nested = try container.nestedContainer(keyedBy: SplitKeys.self, forKey: .split)
@@ -92,9 +111,10 @@ extension SplitLayoutStore.Layout.Node: Codable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: TopKeys.self)
         switch self {
-        case .terminal(let wd):
-            var nested = container.nestedContainer(keyedBy: TerminalKeys.self, forKey: .terminal)
-            try nested.encodeIfPresent(wd, forKey: .workingDirectory)
+        case .terminal(let tabs, let activeTabIndex):
+            var nested = container.nestedContainer(keyedBy: NewTerminalKeys.self, forKey: .terminal)
+            try nested.encode(tabs, forKey: .tabs)
+            try nested.encode(activeTabIndex, forKey: .activeTabIndex)
         case .split(let direction, let ratio, let children):
             var nested = container.nestedContainer(keyedBy: SplitKeys.self, forKey: .split)
             try nested.encode(direction, forKey: .direction)

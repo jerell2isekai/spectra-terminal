@@ -167,6 +167,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                            action: { [weak self] in self?.splitRight(nil) }))
         items.append(.init(title: "Split Down", subtitle: "Cmd+Shift+D", icon: "rectangle.split.1x2",
                            action: { [weak self] in self?.splitDown(nil) }))
+        items.append(.init(title: "New Pane Tab", subtitle: "Cmd+Opt+T", icon: "plus.rectangle.on.rectangle",
+                           action: { [weak self] in self?.newPaneTab(nil) }))
+        items.append(.init(title: "Next Pane Tab", subtitle: "Cmd+Opt+]", icon: "arrow.right.square",
+                           action: { [weak self] in self?.nextPaneTab(nil) }))
+        items.append(.init(title: "Previous Pane Tab", subtitle: "Cmd+Opt+[", icon: "arrow.left.square",
+                           action: { [weak self] in self?.previousPaneTab(nil) }))
         items.append(.init(title: "Settings", subtitle: "Cmd+,", icon: "gearshape",
                            action: { [weak self] in self?.openSettings(nil) }))
         items.append(.init(title: "Toggle Sidebar", subtitle: "Cmd+B", icon: "sidebar.left",
@@ -191,7 +197,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func closeTab(_ sender: Any?) {
-        NSApp.keyWindow?.performClose(nil)
+        // Smart close: pane tab > split pane > window
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else {
+            NSApp.keyWindow?.performClose(nil)
+            return
+        }
+        let splitVC = wc.splitVC
+        guard splitVC.focusedTerminal != nil,
+              let ptc = splitVC.focusedPane else {
+            NSApp.keyWindow?.performClose(nil)
+            return
+        }
+
+        if ptc.tabs.count > 1 {
+            splitVC.closeCurrentPaneTab()
+        } else if splitVC.allPanes().count > 1 {
+            splitVC.closePaneTab(ptc)
+        } else {
+            NSApp.keyWindow?.performClose(nil)
+        }
     }
 
     @objc func selectNextTab(_ sender: Any?) {
@@ -210,6 +234,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func splitDown(_ sender: Any?) {
         guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
         wc.splitDown()
+    }
+
+    @objc func newPaneTab(_ sender: Any?) {
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
+        wc.splitVC.newPaneTab()
+    }
+
+    @objc func nextPaneTab(_ sender: Any?) {
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
+        wc.splitVC.nextPaneTab()
+    }
+
+    @objc func previousPaneTab(_ sender: Any?) {
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
+        wc.splitVC.previousPaneTab()
     }
 
     @objc func showCommandPalette(_ sender: Any?) {
@@ -331,6 +370,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let splitDownItem = NSMenuItem(title: "Split Down", action: #selector(splitDown(_:)), keyEquivalent: "d")
         splitDownItem.keyEquivalentModifierMask = [.command, .shift]
         shellMenu.addItem(splitDownItem)
+        shellMenu.addItem(.separator())
+        let newPaneTabItem = NSMenuItem(title: "New Pane Tab", action: #selector(newPaneTab(_:)), keyEquivalent: "t")
+        newPaneTabItem.keyEquivalentModifierMask = [.command, .option]
+        shellMenu.addItem(newPaneTabItem)
+        let nextPaneTabItem = NSMenuItem(title: "Next Pane Tab", action: #selector(nextPaneTab(_:)), keyEquivalent: "]")
+        nextPaneTabItem.keyEquivalentModifierMask = [.command, .option]
+        shellMenu.addItem(nextPaneTabItem)
+        let prevPaneTabItem = NSMenuItem(title: "Previous Pane Tab", action: #selector(previousPaneTab(_:)), keyEquivalent: "[")
+        prevPaneTabItem.keyEquivalentModifierMask = [.command, .option]
+        shellMenu.addItem(prevPaneTabItem)
         shellMenu.addItem(.separator())
         shellMenu.addItem(withTitle: "Command Palette", action: #selector(showCommandPalette(_:)), keyEquivalent: "p")
         shellMenu.addItem(.separator())

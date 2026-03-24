@@ -311,6 +311,9 @@ class TerminalSurface: NSView, NSTextInputClient {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
+        menu.addItem(withTitle: "New Pane Tab", action: #selector(contextNewPaneTab(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Close Pane Tab", action: #selector(contextClosePaneTab(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Split Right", action: #selector(contextSplitRight(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Split Down", action: #selector(contextSplitDown(_:)), keyEquivalent: "")
         menu.addItem(.separator())
@@ -318,6 +321,16 @@ class TerminalSurface: NSView, NSTextInputClient {
         menu.addItem(withTitle: "Load Layout…", action: #selector(contextLoadLayout(_:)), keyEquivalent: "")
         for item in menu.items { item.target = self }
         return menu
+    }
+
+    @objc private func contextNewPaneTab(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.splitVC.newPaneTab()
+    }
+
+    @objc private func contextClosePaneTab(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.splitVC.closeCurrentPaneTab()
     }
 
     @objc private func contextSplitRight(_ sender: Any?) {
