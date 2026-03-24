@@ -118,7 +118,14 @@ flowchart TD
 - [ ] 內建 SSH 管理器（儲存 host、一鍵連線）
 - [ ] 可擴展的 Lua/Swift plugin 系統
 
-## Phase 5：打磨與發佈
+## 額外功能（Phase 4 後追加）
+
+- [x] CJK 輸入法（NSTextInputClient — preedit/commit flow, IME 候選窗定位）
+- [x] 視窗尺寸記憶（config: `window-width`, `window-height`）
+- [x] 右鍵選單（Split Right/Down、Save Layout、Load Layout）
+- [x] Split layout 存取（`~/.config/spectra/layouts/*.json`）
+
+## Phase 5：打磨與發佈（暫緩）
 
 - [ ] App icon 設計
 - [ ] DMG / Sparkle 自動更新

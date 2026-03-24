@@ -1,46 +1,82 @@
 import AppKit
 import GhosttyKit
 
+// MARK: - Custom Split Container (replaces NSSplitView)
+
+/// A simple container that divides its bounds between two child views.
+/// Uses manual frame calculation like Ghostty's SplitView, not NSSplitView.
+class SplitContainerView: NSView {
+    let direction: SplitViewController.Direction
+    var ratio: CGFloat = 0.5
+    private let dividerThickness: CGFloat = 1
+
+    let firstView: NSView
+    let secondView: NSView
+    private let dividerView = NSView()
+
+    init(direction: SplitViewController.Direction, first: NSView, second: NSView) {
+        self.direction = direction
+        self.firstView = first
+        self.secondView = second
+        super.init(frame: .zero)
+
+        dividerView.wantsLayer = true
+        dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+
+        addSubview(firstView)
+        addSubview(secondView)
+        addSubview(dividerView)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        let b = bounds
+        if direction == .horizontal {
+            let splitX = floor(b.width * ratio)
+            firstView.frame = NSRect(x: 0, y: 0, width: splitX, height: b.height)
+            dividerView.frame = NSRect(x: splitX, y: 0, width: dividerThickness, height: b.height)
+            secondView.frame = NSRect(x: splitX + dividerThickness, y: 0,
+                                       width: b.width - splitX - dividerThickness, height: b.height)
+        } else {
+            // Vertical: first on top, second on bottom (NSView origin is bottom-left)
+            let splitY = floor(b.height * (1 - ratio))
+            firstView.frame = NSRect(x: 0, y: splitY + dividerThickness,
+                                      width: b.width, height: b.height - splitY - dividerThickness)
+            dividerView.frame = NSRect(x: 0, y: splitY, width: b.width, height: dividerThickness)
+            secondView.frame = NSRect(x: 0, y: 0, width: b.width, height: splitY)
+        }
+    }
+}
+
+// MARK: - SplitViewController
+
 /// Manages a recursive tree of terminal splits within a single window.
-///
-/// Each leaf is a TerminalController. Splitting replaces a leaf with a NSSplitView
-/// containing the original terminal and a new one.
-class SplitViewController: NSViewController, NSSplitViewDelegate {
+class SplitViewController: NSViewController {
     private let bridge: GhosttyBridge
     private let configManager: ConfigManager
     private var rootNode: SplitNode
     private(set) var focusedTerminal: TerminalController?
 
-    /// Called when any terminal in this split tree requests close.
     var onSurfaceClose: ((_ terminal: TerminalController) -> Void)?
 
     enum Direction {
-        case horizontal  // side by side (split right/left)
-        case vertical    // top and bottom (split down/up)
+        case horizontal
+        case vertical
     }
 
-    /// A node in the split tree.
     indirect enum SplitNode {
         case terminal(TerminalController)
-        case split(NSSplitView, direction: Direction, first: SplitNode, second: SplitNode)
+        case split(SplitContainerView, direction: Direction, first: SplitNode, second: SplitNode)
 
         var view: NSView {
             switch self {
             case .terminal(let tc): return tc.surface
-            case .split(let sv, _, _, _): return sv
+            case .split(let container, _, _, _): return container
             }
         }
 
-        /// Find the TerminalController at this node or any descendant.
-        func findTerminal(_ target: TerminalController) -> Bool {
-            switch self {
-            case .terminal(let tc): return tc === target
-            case .split(_, _, let first, let second):
-                return first.findTerminal(target) || second.findTerminal(target)
-            }
-        }
-
-        /// Collect all terminals in this subtree.
         func allTerminals() -> [TerminalController] {
             switch self {
             case .terminal(let tc): return [tc]
@@ -53,17 +89,13 @@ class SplitViewController: NSViewController, NSSplitViewDelegate {
     init(bridge: GhosttyBridge, configManager: ConfigManager) {
         self.bridge = bridge
         self.configManager = configManager
-
         let initial = TerminalController(bridge: bridge)
         self.rootNode = .terminal(initial)
         self.focusedTerminal = initial
-
         super.init(nibName: nil, bundle: nil)
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not supported")
-    }
+    required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
         self.view = NSView()
@@ -77,47 +109,49 @@ class SplitViewController: NSViewController, NSSplitViewDelegate {
 
     // MARK: - Public API
 
-    /// Split the focused terminal in the given direction.
     func split(direction: Direction) {
         guard let focused = focusedTerminal else { return }
 
         let newTerminal = TerminalController(bridge: bridge)
         setupTerminalCallbacks(for: [newTerminal])
 
-        rootNode = insertSplit(in: rootNode, target: focused, newTerminal: newTerminal, direction: direction)
+        // Rebuild tree: old leaf becomes a split with old + new
+        rootNode = rebuildTree(rootNode) { node in
+            if case .terminal(let tc) = node, tc === focused {
+                return makeSplitNode(direction: direction,
+                                     first: .terminal(tc),
+                                     second: .terminal(newTerminal))
+            }
+            return nil  // no change
+        }
+
         reinstallViews()
 
-        // Create the surface for the new terminal after it's in the view hierarchy
         if let app = bridge.app {
             newTerminal.surface.createSurface(app: app)
         }
 
-        // Focus the new terminal
         focusedTerminal = newTerminal
         newTerminal.focus()
     }
 
-    /// Close a specific terminal. If it's the last one, calls onSurfaceClose.
     func closeTerminal(_ terminal: TerminalController) {
         let all = allTerminals()
         if all.count <= 1 {
-            // Last terminal — close the window
             onSurfaceClose?(terminal)
             return
         }
 
         terminal.detach()
-        rootNode = removeSplit(in: rootNode, target: terminal)
+        rootNode = removeFromTree(rootNode, target: terminal)
         reinstallViews()
 
-        // Focus the first remaining terminal
         if focusedTerminal === terminal {
             focusedTerminal = allTerminals().first
             focusedTerminal?.focus()
         }
     }
 
-    /// Focus the next or previous split relative to the currently focused one.
     func focusSplit(_ direction: ghostty_action_goto_split_e) {
         let all = allTerminals()
         guard all.count > 1, let focused = focusedTerminal,
@@ -125,13 +159,9 @@ class SplitViewController: NSViewController, NSSplitViewDelegate {
 
         let newIdx: Int
         switch direction {
-        case GHOSTTY_GOTO_SPLIT_NEXT:
-            newIdx = (idx + 1) % all.count
-        case GHOSTTY_GOTO_SPLIT_PREVIOUS:
-            newIdx = (idx - 1 + all.count) % all.count
-        default:
-            // For directional navigation (up/down/left/right), fall back to next/prev for now
-            newIdx = (idx + 1) % all.count
+        case GHOSTTY_GOTO_SPLIT_NEXT:     newIdx = (idx + 1) % all.count
+        case GHOSTTY_GOTO_SPLIT_PREVIOUS: newIdx = (idx - 1 + all.count) % all.count
+        default:                           newIdx = (idx + 1) % all.count
         }
 
         focusedTerminal = all[newIdx]
@@ -140,6 +170,45 @@ class SplitViewController: NSViewController, NSSplitViewDelegate {
 
     func allTerminals() -> [TerminalController] {
         rootNode.allTerminals()
+    }
+
+    // MARK: - Layout Capture / Apply
+
+    func captureLayout() -> SplitLayoutStore.Layout {
+        SplitLayoutStore.Layout(root: captureNode(rootNode))
+    }
+
+    private func captureNode(_ node: SplitNode) -> SplitLayoutStore.Layout.Node {
+        switch node {
+        case .terminal: return .terminal
+        case .split(_, let dir, let first, let second):
+            return .split(direction: dir == .horizontal ? "horizontal" : "vertical",
+                          children: [captureNode(first), captureNode(second)])
+        }
+    }
+
+    func applyLayout(_ layout: SplitLayoutStore.Layout) {
+        for tc in allTerminals() { tc.detach() }
+        rootNode = buildNodeFromLayout(layout.root)
+        reinstallViews()
+        setupTerminalCallbacks(for: allTerminals())
+        if let app = bridge.app {
+            for tc in allTerminals() { tc.surface.createSurface(app: app) }
+        }
+        focusedTerminal = allTerminals().first
+        focusedTerminal?.focus()
+    }
+
+    private func buildNodeFromLayout(_ layoutNode: SplitLayoutStore.Layout.Node) -> SplitNode {
+        switch layoutNode {
+        case .terminal:
+            return .terminal(TerminalController(bridge: bridge))
+        case .split(let dirStr, let children):
+            let dir: Direction = dirStr == "horizontal" ? .horizontal : .vertical
+            let first = buildNodeFromLayout(children.count > 0 ? children[0] : .terminal)
+            let second = buildNodeFromLayout(children.count > 1 ? children[1] : .terminal)
+            return makeSplitNode(direction: dir, first: first, second: second)
+        }
     }
 
     // MARK: - Internal
@@ -171,75 +240,42 @@ class SplitViewController: NSViewController, NSSplitViewDelegate {
         }
     }
 
-    /// Replace a target terminal with a split containing it and a new terminal.
-    private func insertSplit(in node: SplitNode, target: TerminalController,
-                             newTerminal: TerminalController, direction: Direction) -> SplitNode {
+    /// Create a split container node with two children.
+    private func makeSplitNode(direction: Direction, first: SplitNode, second: SplitNode) -> SplitNode {
+        let container = SplitContainerView(direction: direction, first: first.view, second: second.view)
+        return .split(container, direction: direction, first: first, second: second)
+    }
+
+    /// Walk the tree, applying a transform function. If the transform returns a node, use it; otherwise recurse.
+    private func rebuildTree(_ node: SplitNode, transform: (SplitNode) -> SplitNode?) -> SplitNode {
+        // Try to transform this node directly
+        if let result = transform(node) { return result }
+
+        // Otherwise recurse into splits
         switch node {
-        case .terminal(let tc) where tc === target:
-            let splitView = NSSplitView()
-            splitView.isVertical = (direction == .horizontal)
-            splitView.dividerStyle = .thin
-            splitView.delegate = self
-
-            let firstNode = SplitNode.terminal(tc)
-            let secondNode = SplitNode.terminal(newTerminal)
-
-            tc.surface.translatesAutoresizingMaskIntoConstraints = false
-            newTerminal.surface.translatesAutoresizingMaskIntoConstraints = false
-            splitView.addArrangedSubview(tc.surface)
-            splitView.addArrangedSubview(newTerminal.surface)
-
-            return .split(splitView, direction: direction, first: firstNode, second: secondNode)
-
-        case .split(let sv, let dir, let first, let second):
-            let newFirst = insertSplit(in: first, target: target, newTerminal: newTerminal, direction: direction)
-            let newSecond = insertSplit(in: second, target: target, newTerminal: newTerminal, direction: direction)
-            return .split(sv, direction: dir, first: newFirst, second: newSecond)
-
-        default:
+        case .terminal:
             return node
+        case .split(_, let dir, let first, let second):
+            let newFirst = rebuildTree(first, transform: transform)
+            let newSecond = rebuildTree(second, transform: transform)
+            return makeSplitNode(direction: dir, first: newFirst, second: newSecond)
         }
     }
 
-    /// Remove a terminal from the tree, collapsing its parent split.
-    private func removeSplit(in node: SplitNode, target: TerminalController) -> SplitNode {
+    /// Remove a terminal from the tree, collapsing its parent split to the surviving sibling.
+    private func removeFromTree(_ node: SplitNode, target: TerminalController) -> SplitNode {
         switch node {
-        case .terminal(let tc) where tc === target:
-            // This shouldn't happen at the root (handled by closeTerminal)
+        case .terminal:
             return node
-
         case .split(_, _, let first, let second):
-            // Check if target is in first or second
-            if case .terminal(let tc) = first, tc === target {
-                return second
-            }
-            if case .terminal(let tc) = second, tc === target {
-                return first
-            }
-            // Recurse
-            let newFirst = removeSplit(in: first, target: target)
-            let newSecond = removeSplit(in: second, target: target)
-            // Check if a child collapsed to a different node type
-            if case .split(let sv, let dir, _, _) = node {
-                return .split(sv, direction: dir, first: newFirst, second: newSecond)
-            }
-            return node
-
-        default:
-            return node
+            if case .terminal(let tc) = first, tc === target { return second }
+            if case .terminal(let tc) = second, tc === target { return first }
+            let newFirst = removeFromTree(first, target: target)
+            let newSecond = removeFromTree(second, target: target)
+            return makeSplitNode(direction: {
+                if case .split(_, let d, _, _) = node { return d }
+                return .horizontal
+            }(), first: newFirst, second: newSecond)
         }
-    }
-
-    // MARK: - NSSplitViewDelegate
-
-    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
-        return max(proposedMinimumPosition, 50)
-    }
-
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
-        let total = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
-        return min(proposedMaximumPosition, total - 50)
     }
 }

@@ -31,6 +31,8 @@ struct SpectraConfig {
         var workingDirectory: String = ""
         var confirmClose: Bool = true
         var scrollbackLines: Int = 10000
+        var windowWidth: Int = 800
+        var windowHeight: Int = 600
     }
 
     // MARK: - File path
@@ -82,6 +84,8 @@ struct SpectraConfig {
         if let v = parsed["general.scrollback-lines"], let i = Int(v) {
             config.general.scrollbackLines = i
         }
+        if let v = parsed["general.window-width"], let i = Int(v) { config.general.windowWidth = i }
+        if let v = parsed["general.window-height"], let i = Int(v) { config.general.windowHeight = i }
 
         return config
     }
@@ -121,6 +125,8 @@ struct SpectraConfig {
         }
         lines.append("confirm-close = \(general.confirmClose)")
         lines.append("scrollback-lines = \(general.scrollbackLines)")
+        lines.append("window-width = \(general.windowWidth)")
+        lines.append("window-height = \(general.windowHeight)")
         lines.append("")
 
         try lines.joined(separator: "\n").write(to: Self.configFile, atomically: true, encoding: .utf8)

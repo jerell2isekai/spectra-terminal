@@ -15,8 +15,10 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         self.configManager = configManager
         self.splitVC = SplitViewController(bridge: bridge, configManager: configManager)
 
+        let cfg = configManager.config
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: CGFloat(cfg.general.windowWidth),
+                                height: CGFloat(cfg.general.windowHeight)),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
