@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var editorControllers: [EditorWindowController] = []
     private var settingsWC: SettingsWindowController?
     private var commandPalette: CommandPaletteController?
+    private var appearanceObserver: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAppIcon()
@@ -31,6 +32,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configManager.startWatching()
 
         applyAppearanceMode()
+
+        // Observe system appearance changes to update ghostty color scheme
+        appearanceObserver = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            self?.syncColorScheme()
+        }
 
         // Restore previous session or create a fresh window
         if !restoreSession() {
@@ -288,6 +294,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             NSApp.appearance = nil  // follow system
         }
+        syncColorScheme()
+    }
+
+    private func syncColorScheme() {
+        guard let app = bridge.app else { return }
+        let appearance = NSApp.effectiveAppearance
+        let scheme: ghostty_color_scheme_e = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? GHOSTTY_COLOR_SCHEME_DARK
+            : GHOSTTY_COLOR_SCHEME_LIGHT
+        ghostty_app_set_color_scheme(app, scheme)
     }
 
     @objc func toggleSidebar(_ sender: Any?) {

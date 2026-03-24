@@ -30,7 +30,7 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true
         panel.level = .floating
-        panel.backgroundColor = NSColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 0.95)
+        panel.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.95)
         panel.isOpaque = false
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
@@ -71,7 +71,7 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         searchField.isBordered = false
         searchField.focusRingType = .none
         searchField.backgroundColor = .clear
-        searchField.textColor = .white
+        searchField.textColor = .labelColor
         searchField.delegate = self
         stack.addArrangedSubview(searchField)
 

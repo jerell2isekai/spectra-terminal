@@ -25,7 +25,7 @@ class EditorWindowController: NSWindowController, NSWindowDelegate {
         textView.isEditable = false
         textView.isSelectable = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.backgroundColor = NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+        textView.backgroundColor = .textBackgroundColor
         textView.textColor = .labelColor
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -51,7 +51,7 @@ class EditorWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.backgroundColor = NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+        window.backgroundColor = .windowBackgroundColor
         window.minSize = NSSize(width: 300, height: 200)
         window.isReleasedWhenClosed = false
         window.tabbingMode = .preferred

@@ -30,7 +30,7 @@ class SplitContainerView: NSView {
         super.init(frame: .zero)
 
         dividerView.wantsLayer = true
-        dividerView.layer?.backgroundColor = NSColor(white: 0.35, alpha: 1.0).cgColor
+        dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
         dividerView.layer?.cornerRadius = 1
 
         addSubview(firstView)
@@ -39,6 +39,13 @@ class SplitContainerView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        super.updateLayer()
+        dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    }
 
     override func layout() {
         super.layout()
@@ -102,7 +109,7 @@ class SplitContainerView: NSView {
     override func mouseUp(with event: NSEvent) {
         if isDragging {
             isDragging = false
-            dividerView.layer?.backgroundColor = NSColor(white: 0.35, alpha: 1.0).cgColor
+            dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
         } else {
             super.mouseUp(with: event)
         }
@@ -371,6 +378,13 @@ class SplitViewController: NSViewController {
             for tc in allTerminals() {
                 let wd = paths[ObjectIdentifier(tc)]
                 tc.surface.createSurface(app: app, workingDirectory: wd)
+            }
+            // ghostty_surface_new() defaults to focused — unfocus all first,
+            // then set exclusive focus on the target pane only.
+            for tc in allTerminals() {
+                if let s = tc.surface.surface {
+                    ghostty_surface_set_focus(s, false)
+                }
             }
         }
         if let firstPane = allPanes().first {

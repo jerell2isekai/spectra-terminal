@@ -158,23 +158,35 @@ private class PaneTabItemView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override var wantsUpdateLayer: Bool { true }
+
+    /// Called by AppKit with the correct NSAppearance.current already set,
+    /// so dynamic NSColor → CGColor resolution matches the view's appearance.
+    override func updateLayer() {
+        if isActive {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        } else {
+            layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    }
+
     func update(title: String, isActive: Bool) {
         titleLabel.stringValue = title
         self.isActive = isActive  // triggers updateAppearance via didSet
     }
 
+    /// Update non-layer properties and schedule a layer redraw.
     private func updateAppearance() {
         if isActive {
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             titleLabel.textColor = .labelColor
             closeButton.contentTintColor = .secondaryLabelColor
             closeButton.alphaValue = 1
         } else {
-            layer?.backgroundColor = NSColor.clear.cgColor
             titleLabel.textColor = .secondaryLabelColor
             closeButton.contentTintColor = .tertiaryLabelColor
             closeButton.alphaValue = isHovered ? 0.7 : 0
         }
+        needsDisplay = true  // triggers updateLayer() in correct appearance context
     }
 
     override func mouseEntered(with event: NSEvent) {

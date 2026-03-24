@@ -36,7 +36,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         // the standard vibrancy titlebar so it doesn't become invisible.
         let hasTransparency = SpectraConfig.backgroundOpacity < 1.0
         window.titlebarAppearsTransparent = !hasTransparency
-        window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+        window.backgroundColor = .windowBackgroundColor
         window.minSize = NSSize(width: 400, height: 300)
         window.isReleasedWhenClosed = false
         window.tabbingMode = .preferred
@@ -163,12 +163,12 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         let opacity = max(0.001, min(1.0, SpectraConfig.backgroundOpacity))
         if opacity < 1.0 {
             window.isOpaque = false
-            window.backgroundColor = .white.withAlphaComponent(0.001)
+            window.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.001)
             window.titlebarAppearsTransparent = false  // keep titlebar visible
             window.hasShadow = true
         } else {
             window.isOpaque = true
-            window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+            window.backgroundColor = .windowBackgroundColor
             window.titlebarAppearsTransparent = true   // sleek look when opaque
         }
     }
