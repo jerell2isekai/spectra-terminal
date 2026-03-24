@@ -15,17 +15,19 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         self.configManager = configManager
         self.splitVC = SplitViewController(bridge: bridge, configManager: configManager)
 
-        let cfg = configManager.config
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: CGFloat(cfg.general.windowWidth),
-                                height: CGFloat(cfg.general.windowHeight)),
+            contentRect: NSRect(x: 0, y: 0, width: CGFloat(SpectraConfig.windowWidth),
+                                height: CGFloat(SpectraConfig.windowHeight)),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Spectra"
         window.center()
-        window.titlebarAppearsTransparent = true
+        // Only make titlebar transparent when fully opaque; otherwise keep
+        // the standard vibrancy titlebar so it doesn't become invisible.
+        let hasTransparency = SpectraConfig.backgroundOpacity < 1.0
+        window.titlebarAppearsTransparent = !hasTransparency
         window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
         window.minSize = NSSize(width: 400, height: 300)
         window.isReleasedWhenClosed = false
@@ -99,13 +101,16 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func applyConfigAppearance() {
         guard let window else { return }
-        let opacity = max(0.001, min(1.0, configManager.config.appearance.backgroundOpacity))
+        let opacity = max(0.001, min(1.0, SpectraConfig.backgroundOpacity))
         if opacity < 1.0 {
             window.isOpaque = false
-            window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: opacity)
+            window.backgroundColor = .white.withAlphaComponent(0.001)
+            window.titlebarAppearsTransparent = false  // keep titlebar visible
+            window.hasShadow = true
         } else {
             window.isOpaque = true
             window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+            window.titlebarAppearsTransparent = true   // sleek look when opaque
         }
     }
 

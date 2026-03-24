@@ -1,47 +1,28 @@
 import Foundation
 import GhosttyKit
 
-/// Manages Spectra's config lifecycle: load from TOML, translate to ghostty format,
-/// write generated ghostty config, and watch for file changes.
+/// Manages Spectra's config lifecycle: load ghostty-format config directly, watch for changes.
+/// No TOML parsing or format translation needed — config is native ghostty format.
 class ConfigManager {
-    private(set) var config: SpectraConfig
-    var onChange: ((SpectraConfig) -> Void)?
+    var onChange: (() -> Void)?
 
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
     private var debounceWork: DispatchWorkItem?
     private var suppressFileWatch = false
 
-    /// Path to the auto-generated ghostty config (derived from Spectra TOML)
-    private var ghosttyConfigURL: URL {
-        SpectraConfig.configDir.appendingPathComponent(".ghostty-generated")
-    }
-
     init() {
-        self.config = SpectraConfig.load()
+        SpectraConfig.ensureConfigExists()
     }
 
-    // MARK: - Ghostty Config Bridge
+    // MARK: - Ghostty Config
 
-    /// Write a ghostty-format config file derived from the current Spectra config.
-    @discardableResult
-    func writeGhosttyConfig() -> String {
-        let dir = SpectraConfig.configDir
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let content = config.toGhosttyConfig()
-            try content.write(to: ghosttyConfigURL, atomically: true, encoding: .utf8)
-        } catch {
-            print("[ConfigManager] Failed to write ghostty config: \(error)")
-        }
-        return ghosttyConfigURL.path
-    }
-
-    /// Load Spectra config into a ghostty_config_t. Caller must free it when done.
+    /// Create a ghostty_config_t by directly loading Spectra's config file.
+    /// No translation needed — the file IS in ghostty format.
     func createGhosttyConfig() -> ghostty_config_t? {
         guard let cfg = ghostty_config_new() else { return nil }
 
-        let path = writeGhosttyConfig()
+        let path = SpectraConfig.configFile.path
         path.withCString { cPath in
             ghostty_config_load_file(cfg, cPath)
         }
@@ -52,20 +33,17 @@ class ConfigManager {
     // MARK: - Reload
 
     func reload() {
-        config = SpectraConfig.load()
-        onChange?(config)
+        onChange?()
     }
 
-    /// Update config from Settings UI. Suppresses file watcher to prevent double-reload.
-    func update(_ newConfig: SpectraConfig) {
-        config = newConfig
+    /// Write updates to config file and trigger reload. Suppresses file watcher.
+    func writeAndReload(_ updates: [String: String]) {
         suppressFileWatch = true
-        try? config.save()
-        // Re-enable file watch after a short delay (past the debounce window)
+        SpectraConfig.write(updates)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.suppressFileWatch = false
         }
-        onChange?(config)
+        onChange?()
     }
 
     // MARK: - File Watching
@@ -74,9 +52,7 @@ class ConfigManager {
         stopWatching()
 
         let path = SpectraConfig.configFile.path
-        if !FileManager.default.fileExists(atPath: path) {
-            try? config.save()
-        }
+        SpectraConfig.ensureConfigExists()
 
         fileDescriptor = open(path, O_EVTONLY)
         guard fileDescriptor >= 0 else { return }
@@ -88,26 +64,19 @@ class ConfigManager {
         )
         source.setEventHandler { [weak self] in
             guard let self, !self.suppressFileWatch else { return }
-
             let flags = source.data
-            // Cancel previous debounce to coalesce rapid events
             self.debounceWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                self?.reload()
-            }
+            let work = DispatchWorkItem { [weak self] in self?.reload() }
             self.debounceWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
 
-            // Re-watch after rename (editors like vim write-then-rename)
             if flags.contains(.rename) || flags.contains(.delete) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.startWatching()
                 }
             }
         }
-        source.setCancelHandler { [fd = fileDescriptor] in
-            close(fd)
-        }
+        source.setCancelHandler { [fd = fileDescriptor] in close(fd) }
         source.resume()
         fileWatcher = source
     }
@@ -120,7 +89,5 @@ class ConfigManager {
         fileDescriptor = -1
     }
 
-    deinit {
-        stopWatching()
-    }
+    deinit { stopWatching() }
 }

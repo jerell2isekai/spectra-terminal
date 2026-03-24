@@ -6,7 +6,12 @@ import GhosttyKit
 /// A container that divides its bounds between two child views with a draggable divider.
 class SplitContainerView: NSView {
     let direction: SplitViewController.Direction
-    var ratio: CGFloat = 0.5 { didSet { needsLayout = true } }
+    var ratio: CGFloat = 0.5 {
+        didSet {
+            needsLayout = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
 
     /// Visual divider thickness (the colored bar).
     private let dividerThickness: CGFloat = 4
@@ -25,7 +30,7 @@ class SplitContainerView: NSView {
         super.init(frame: .zero)
 
         dividerView.wantsLayer = true
-        dividerView.layer?.backgroundColor = NSColor.gridColor.cgColor
+        dividerView.layer?.backgroundColor = NSColor(white: 0.35, alpha: 1.0).cgColor
         dividerView.layer?.cornerRadius = 1
 
         addSubview(firstView)
@@ -37,6 +42,7 @@ class SplitContainerView: NSView {
 
     override func layout() {
         super.layout()
+        window?.invalidateCursorRects(for: self)
         let b = bounds
         let dt = dividerThickness
         if direction == .horizontal {
@@ -96,7 +102,7 @@ class SplitContainerView: NSView {
     override func mouseUp(with event: NSEvent) {
         if isDragging {
             isDragging = false
-            dividerView.layer?.backgroundColor = NSColor.gridColor.cgColor
+            dividerView.layer?.backgroundColor = NSColor(white: 0.35, alpha: 1.0).cgColor
         } else {
             super.mouseUp(with: event)
         }

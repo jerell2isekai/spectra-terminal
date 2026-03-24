@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         bridge.initialize(configManager: configManager)
 
-        configManager.onChange = { [weak self] _ in
+        configManager.onChange = { [weak self] in
             guard let self else { return }
             self.bridge.reloadConfig()
             NotificationCenter.default.post(name: GhosttyBridge.configDidChange, object: nil)

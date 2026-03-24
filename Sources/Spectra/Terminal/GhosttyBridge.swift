@@ -34,7 +34,7 @@ class GhosttyBridge {
     func initialize(configManager: ConfigManager) {
         self.configManager = configManager
 
-        // 1. Create ghostty config from Spectra's TOML config (not ghostty's default files)
+        // 1. Create ghostty config from Spectra's config file (native ghostty format)
         guard let cfg = configManager.createGhosttyConfig() else {
             print("[GhosttyBridge] Failed to create ghostty config from Spectra config")
             return

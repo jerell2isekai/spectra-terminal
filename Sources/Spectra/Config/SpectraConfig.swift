@@ -1,41 +1,11 @@
 import Foundation
 
-/// Spectra's own configuration model, stored as TOML at ~/.config/spectra/config.toml.
-/// Values are translated to ghostty config format when loading libghostty.
-struct SpectraConfig {
-    var font = FontConfig()
-    var appearance = AppearanceConfig()
-    var cursor = CursorConfig()
-    var general = GeneralConfig()
+/// Spectra's config file in ghostty-compatible `key = value` format.
+/// Stored at ~/.config/spectra/config. Can be directly loaded by ghostty_config_load_file().
+/// Ghostty users can copy their config directly or use "Import from Ghostty".
+enum SpectraConfig {
 
-    struct FontConfig {
-        var family: String = ""
-        var size: Double = 13
-        var lineHeight: Double = 1.0
-    }
-
-    struct AppearanceConfig {
-        var theme: String = ""
-        var backgroundOpacity: Double = 1.0
-        var windowPaddingX: Int = 0
-        var windowPaddingY: Int = 0
-    }
-
-    struct CursorConfig {
-        var style: String = "block"
-        var blink: Bool = true
-    }
-
-    struct GeneralConfig {
-        var shell: String = ""
-        var workingDirectory: String = ""
-        var confirmClose: Bool = true
-        var scrollbackLines: Int = 10000
-        var windowWidth: Int = 800
-        var windowHeight: Int = 600
-    }
-
-    // MARK: - File path
+    // MARK: - Paths
 
     static var configDir: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -43,174 +13,190 @@ struct SpectraConfig {
     }
 
     static var configFile: URL {
-        configDir.appendingPathComponent("config.toml")
+        configDir.appendingPathComponent("config")
     }
 
-    // MARK: - Load from TOML
-
-    static func load() -> SpectraConfig {
-        var config = SpectraConfig()
-        guard let content = try? String(contentsOf: configFile, encoding: .utf8) else {
-            return config
-        }
-
-        let parsed = TOMLParser.parse(content)
-
-        // [font]
-        if let v = parsed["font.family"] { config.font.family = v }
-        if let v = parsed["font.size"], let d = Double(v) { config.font.size = d }
-        if let v = parsed["font.line-height"], let d = Double(v) { config.font.lineHeight = d }
-
-        // [appearance]
-        if let v = parsed["appearance.theme"] { config.appearance.theme = v }
-        if let v = parsed["appearance.background-opacity"], let d = Double(v) {
-            config.appearance.backgroundOpacity = d
-        }
-        if let v = parsed["appearance.window-padding-x"], let i = Int(v) {
-            config.appearance.windowPaddingX = i
-        }
-        if let v = parsed["appearance.window-padding-y"], let i = Int(v) {
-            config.appearance.windowPaddingY = i
-        }
-
-        // [cursor]
-        if let v = parsed["cursor.style"] { config.cursor.style = v }
-        if let v = parsed["cursor.blink"] { config.cursor.blink = (v == "true") }
-
-        // [general]
-        if let v = parsed["general.shell"] { config.general.shell = v }
-        if let v = parsed["general.working-directory"] { config.general.workingDirectory = v }
-        if let v = parsed["general.confirm-close"] { config.general.confirmClose = (v == "true") }
-        if let v = parsed["general.scrollback-lines"], let i = Int(v) {
-            config.general.scrollbackLines = i
-        }
-        if let v = parsed["general.window-width"], let i = Int(v) { config.general.windowWidth = i }
-        if let v = parsed["general.window-height"], let i = Int(v) { config.general.windowHeight = i }
-
-        return config
+    /// All known Ghostty config locations (macOS App Support, then XDG).
+    static var ghosttyConfigCandidates: [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            // macOS standard (Ghostty.app uses Application Support)
+            home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config"),
+            // XDG (Linux, or if user set XDG_CONFIG_HOME)
+            home.appendingPathComponent(".config/ghostty/config"),
+        ]
     }
 
-    // MARK: - Save to TOML
+    static var ghosttyConfigFile: URL? {
+        ghosttyConfigCandidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
 
-    func save() throws {
-        let dir = Self.configDir
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    // MARK: - Default config content
 
-        var lines: [String] = []
-        lines.append("# Spectra Terminal Configuration")
-        lines.append("")
+    static let defaultConfig = """
+    # Spectra Terminal Configuration
+    # Uses Ghostty config format (key = value). See: https://ghostty.org/docs/config
+    #
+    # Font
+    # font-family = JetBrains Mono
+    font-size = 13
 
-        lines.append("[font]")
-        if !font.family.isEmpty { lines.append("family = \"\(font.family)\"") }
-        lines.append("size = \(formatNumber(font.size))")
-        lines.append("line-height = \(formatNumber(font.lineHeight))")
-        lines.append("")
+    # Appearance
+    # theme = catppuccin-mocha
+    background-opacity = 1
+    # window-padding-x = 8
+    # window-padding-y = 4
 
-        lines.append("[appearance]")
-        if !appearance.theme.isEmpty { lines.append("theme = \"\(appearance.theme)\"") }
-        lines.append("background-opacity = \(formatNumber(appearance.backgroundOpacity))")
-        lines.append("window-padding-x = \(appearance.windowPaddingX)")
-        lines.append("window-padding-y = \(appearance.windowPaddingY)")
-        lines.append("")
+    # Cursor
+    cursor-style = block
+    cursor-style-blink = true
 
-        lines.append("[cursor]")
-        lines.append("style = \"\(cursor.style)\"")
-        lines.append("blink = \(cursor.blink)")
-        lines.append("")
+    # Terminal
+    scrollback-limit = 10000
+    # command = /bin/zsh
 
-        lines.append("[general]")
-        if !general.shell.isEmpty { lines.append("shell = \"\(general.shell)\"") }
-        if !general.workingDirectory.isEmpty {
-            lines.append("working-directory = \"\(general.workingDirectory)\"")
+    # Window size (in cell columns/rows, same as ghostty)
+    # window-width = 120
+    # window-height = 36
+    """
+
+    // MARK: - Ensure config exists
+
+    static func ensureConfigExists() {
+        let path = configFile.path
+        guard !FileManager.default.fileExists(atPath: path) else { return }
+        do {
+            try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+            try defaultConfig.write(to: configFile, atomically: true, encoding: .utf8)
+        } catch {
+            print("[SpectraConfig] Failed to create default config: \(error)")
         }
-        lines.append("confirm-close = \(general.confirmClose)")
-        lines.append("scrollback-lines = \(general.scrollbackLines)")
-        lines.append("window-width = \(general.windowWidth)")
-        lines.append("window-height = \(general.windowHeight)")
-        lines.append("")
-
-        try lines.joined(separator: "\n").write(to: Self.configFile, atomically: true, encoding: .utf8)
     }
 
-    // MARK: - Translate to ghostty config format
+    // MARK: - Read / Write raw config
 
-    func toGhosttyConfig() -> String {
-        var lines: [String] = []
-        lines.append("# Auto-generated by Spectra — do not edit")
+    /// Parse config file into a key-value dictionary.
+    static func readAll() -> [String: String] {
+        guard let content = try? String(contentsOf: configFile, encoding: .utf8) else { return [:] }
+        return parseKeyValue(content)
+    }
 
-        if !font.family.isEmpty { lines.append("font-family = \(escapeGhosttyValue(font.family))") }
-        lines.append("font-size = \(formatNumber(font.size))")
-        if font.lineHeight != 1.0 {
-            // ghostty uses percentage adjustment: 1.2 line-height = 20% increase
-            let pct = Int((font.lineHeight - 1.0) * 100)
-            if pct != 0 { lines.append("adjust-cell-height = \(pct)%") }
+    /// Read a single value from the config file.
+    static func read(_ key: String) -> String? {
+        readAll()[key]
+    }
+
+    /// Read a value with a default.
+    static func read(_ key: String, default defaultValue: String) -> String {
+        readAll()[key] ?? defaultValue
+    }
+
+    /// Window size from ghostty config. window-width/height are cell counts.
+    /// Convert to pixel estimates using typical cell dimensions.
+    static var windowWidth: Int {
+        guard let v = read("window-width"), let cells = Int(v), cells > 0 else { return 800 }
+        return min(cells * 8, 3840)  // cap at 4K width
+    }
+    static var windowHeight: Int {
+        guard let v = read("window-height"), let rows = Int(v), rows > 0 else { return 600 }
+        return min(rows * 18, 2160)  // cap at 4K height
+    }
+    static var backgroundOpacity: Double { Double(read("background-opacity") ?? "") ?? 1.0 }
+
+    /// Write a set of key-value pairs to the config file.
+    /// Preserves comments and unmodified keys.
+    static func write(_ updates: [String: String]) {
+        let content = (try? String(contentsOf: configFile, encoding: .utf8)) ?? defaultConfig
+        var lines = content.components(separatedBy: .newlines)
+        var updatedKeys = Set<String>()
+
+        // Update existing lines
+        for i in 0..<lines.count {
+            let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            guard let eqIdx = trimmed.firstIndex(of: "=") else { continue }
+            let key = trimmed[trimmed.startIndex..<eqIdx].trimmingCharacters(in: .whitespaces)
+            if let newValue = updates[key] {
+                lines[i] = "\(key) = \(newValue)"
+                updatedKeys.insert(key)
+            }
         }
 
-        if !appearance.theme.isEmpty { lines.append("theme = \(escapeGhosttyValue(appearance.theme))") }
-        lines.append("background-opacity = \(formatNumber(appearance.backgroundOpacity))")
-        lines.append("window-padding-x = \(appearance.windowPaddingX)")
-        lines.append("window-padding-y = \(appearance.windowPaddingY)")
+        // Append new keys that weren't in the file
+        for (key, value) in updates where !updatedKeys.contains(key) {
+            lines.append("\(key) = \(value)")
+        }
 
-        lines.append("cursor-style = \(cursor.style)")
-        lines.append("cursor-style-blink = \(cursor.blink)")
-
-        if !general.shell.isEmpty { lines.append("command = \(escapeGhosttyValue(general.shell))") }
-        lines.append("scrollback-limit = \(general.scrollbackLines)")
-
-        return lines.joined(separator: "\n") + "\n"
+        do {
+            try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+            try lines.joined(separator: "\n").write(to: configFile, atomically: true, encoding: .utf8)
+        } catch {
+            print("[SpectraConfig] Failed to write config: \(error)")
+        }
     }
 
-    private func escapeGhosttyValue(_ value: String) -> String {
-        value.replacingOccurrences(of: "\n", with: "")
-             .replacingOccurrences(of: "\r", with: "")
+    // MARK: - Import from Ghostty
+
+    /// Copy Ghostty's config file to Spectra's config location.
+    /// Returns true if successful.
+    @discardableResult
+    static func importFromGhostty() -> Bool {
+        guard let src = ghosttyConfigFile else { return false }
+        return importFrom(url: src)
     }
 
-    private func formatNumber(_ value: Double) -> String {
-        value == value.rounded() ? String(Int(value)) : String(value)
+    /// Check if any Ghostty config exists and can be imported.
+    static var canImportFromGhostty: Bool {
+        ghosttyConfigFile != nil
     }
-}
 
-// MARK: - Minimal TOML Parser
+    /// Import from any file URL. Replaces the entire config file.
+    @discardableResult
+    static func importFrom(url: URL) -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let header = "# Imported from: \(url.lastPathComponent)\n"
+            let footer = "\n# Spectra-specific settings (added by import)\n"
 
-enum TOMLParser {
-    /// Parse TOML content into a flat dictionary keyed by "section.key".
-    static func parse(_ content: String) -> [String: String] {
+            // Parse imported content to check which spectra keys are already present
+            let existing = parseKeyValue(content)
+            var extras: [String] = []
+            if existing["scrollback-limit"] == nil {
+                extras.append("scrollback-limit = 10000")
+            }
+
+            var result = header + content
+            if !extras.isEmpty {
+                result += footer + extras.joined(separator: "\n") + "\n"
+            }
+
+            try result.write(to: configFile, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            print("[SpectraConfig] Failed to import from \(url): \(error)")
+            return false
+        }
+    }
+
+    // MARK: - Parser
+
+    /// Parse ghostty `key = value` format into a dictionary.
+    private static func parseKeyValue(_ content: String) -> [String: String] {
         var result: [String: String] = [:]
-        var currentSection = ""
-
         for line in content.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            // Skip empty lines and comments
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
-
-            // Section header
-            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
-                currentSection = String(trimmed.dropFirst().dropLast())
-                    .trimmingCharacters(in: .whitespaces)
-                continue
-            }
-
-            // Key = Value
             guard let eqIdx = trimmed.firstIndex(of: "=") else { continue }
-            let key = trimmed[trimmed.startIndex..<eqIdx]
-                .trimmingCharacters(in: .whitespaces)
-            var value = trimmed[trimmed.index(after: eqIdx)...]
-                .trimmingCharacters(in: .whitespaces)
-
-            // Strip quotes from string values, or strip inline comments for unquoted values
-            if value.hasPrefix("\"") && value.hasSuffix("\"") && value.count >= 2 {
-                value = String(value.dropFirst().dropLast())
-            } else if let hashIdx = value.firstIndex(of: "#") {
-                // Strip inline comment for unquoted values: `size = 13 # my size`
-                value = value[value.startIndex..<hashIdx]
-                    .trimmingCharacters(in: .whitespaces)
+            let key = trimmed[trimmed.startIndex..<eqIdx].trimmingCharacters(in: .whitespaces)
+            var value = trimmed[trimmed.index(after: eqIdx)...].trimmingCharacters(in: .whitespaces)
+            // Strip inline comment
+            if let hashIdx = value.firstIndex(of: "#"),
+               !value.hasPrefix("\"") {
+                value = value[value.startIndex..<hashIdx].trimmingCharacters(in: .whitespaces)
             }
-
-            let fullKey = currentSection.isEmpty ? key : "\(currentSection).\(key)"
-            result[fullKey] = value
+            result[key] = value
         }
-
         return result
     }
 }
