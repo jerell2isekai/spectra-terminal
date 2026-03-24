@@ -1,0 +1,21 @@
+# Build artifacts
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+
+# libghostty build output (built from source, not committed)
+lib/
+include/ghostty*
+
+# macOS
+.DS_Store
+
+# IDE
+*.xcworkspace/xcuserdata/
+*.playground/
+
+# Claude Code
+AGENTS.md
+CLAUDE.md
+.claude/

@@ -1,0 +1,6 @@
+module GhosttyKit [system] {
+    // After building libghostty, copy the headers to include/
+    header "../../include/ghostty.h"
+    link "ghostty"
+    export *
+}
