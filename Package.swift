@@ -19,6 +19,9 @@ let package = Package(
             name: "Spectra",
             dependencies: ["GhosttyKit"],
             path: "Sources/Spectra",
+            resources: [
+                .copy("Resources/AppIcon.icns"),
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon"),

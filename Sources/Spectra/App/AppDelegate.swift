@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var commandPalette: CommandPaletteController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupAppIcon()
         setupMainMenu()
 
         bridge.onNewTab = { [weak self] in
@@ -57,6 +58,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         saveSession()
         configManager.stopWatching()
         bridge.shutdown()
+    }
+
+    // MARK: - App Icon
+
+    private func setupAppIcon() {
+        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
     }
 
     // MARK: - Session Persistence

@@ -9,6 +9,9 @@ lib/
 include/ghostty*
 include/module.modulemap
 
+# Icon intermediate artifacts (regenerate with: iconutil -c icns assets/AppIcon.iconset)
+assets/AppIcon.iconset/
+
 # macOS
 .DS_Store
 
