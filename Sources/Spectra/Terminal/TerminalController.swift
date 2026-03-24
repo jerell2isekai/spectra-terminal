@@ -24,11 +24,13 @@ class TerminalController {
     func attach(to containerView: NSView) {
         surface.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(surface)
+        // Use safeAreaLayoutGuide to avoid overlapping the title bar / traffic light buttons
+        let guide = containerView.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            surface.topAnchor.constraint(equalTo: containerView.topAnchor),
-            surface.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            surface.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            surface.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            surface.topAnchor.constraint(equalTo: guide.topAnchor),
+            surface.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
         ])
 
         if let app = bridge.app {
