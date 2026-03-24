@@ -4,16 +4,24 @@ import GhosttyKit
 /// Each window (and each native tab) is one MainWindowController with a split-capable terminal.
 class MainWindowController: NSWindowController, NSWindowDelegate {
     let splitVC: SplitViewController
+    private let workspaceVC: WorkspaceViewController
+    private let sidebarVC: SidebarViewController
     private let bridge: GhosttyBridge
     private let configManager: ConfigManager
 
     var onClose: (() -> Void)?
     private static let tabbingID = "com.spectra.terminal"
+    private static let toolbarID = NSToolbar.Identifier("com.spectra.mainToolbar")
 
     init(bridge: GhosttyBridge, configManager: ConfigManager) {
         self.bridge = bridge
         self.configManager = configManager
         self.splitVC = SplitViewController(bridge: bridge, configManager: configManager)
+        self.sidebarVC = SidebarViewController()
+        self.workspaceVC = WorkspaceViewController(
+            sidebarVC: sidebarVC,
+            terminalContentVC: splitVC
+        )
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: CGFloat(SpectraConfig.windowWidth),
@@ -37,7 +45,13 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
 
         window.delegate = self
-        window.contentViewController = splitVC
+        window.contentViewController = workspaceVC
+
+        // Start with sidebar collapsed by default
+        workspaceVC.setSidebarCollapsed(true, animated: false)
+
+        // Setup toolbar
+        setupToolbar()
 
         // Create initial surface after view is in hierarchy
         if let app = bridge.app {
@@ -45,7 +59,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         splitVC.focusedTerminal?.focus()
 
-        // Handle last terminal close → close window
+        // Handle last terminal close -> close window
         splitVC.onSurfaceClose = { [weak self] _ in
             self?.window?.performClose(nil)
         }
@@ -75,10 +89,27 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) not supported")
     }
 
+    // MARK: - Toolbar
+
+    private func setupToolbar() {
+        let toolbar = NSToolbar(identifier: Self.toolbarID)
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window?.toolbar = toolbar
+        window?.toolbarStyle = .unified
+    }
+
     // MARK: - Split Actions
 
     func splitRight() { splitVC.split(direction: .horizontal) }
     func splitDown() { splitVC.split(direction: .vertical) }
+
+    // MARK: - Sidebar Actions
+
+    @objc func toggleSidebarAction(_ sender: Any?) {
+        workspaceVC.toggleSidebar(sender)
+    }
 
     // MARK: - Notifications
 
@@ -145,5 +176,41 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     override func newWindowForTab(_ sender: Any?) {
         guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
         appDelegate.createWindow(tabIn: window)
+    }
+}
+
+// MARK: - NSToolbarDelegate
+
+extension MainWindowController: NSToolbarDelegate {
+
+    func toolbar(_ toolbar: NSToolbar,
+                 itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch itemIdentifier {
+        case .toggleSidebar:
+            return NSToolbarItem(itemIdentifier: .toggleSidebar)
+
+        case .sidebarTrackingSeparator:
+            return NSTrackingSeparatorToolbarItem(
+                identifier: .sidebarTrackingSeparator,
+                splitView: workspaceVC.splitView,
+                dividerIndex: 0
+            )
+
+        default:
+            return nil
+        }
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        return [
+            .toggleSidebar,
+            .sidebarTrackingSeparator,
+            .flexibleSpace,
+        ]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        return toolbarDefaultItemIdentifiers(toolbar)
     }
 }

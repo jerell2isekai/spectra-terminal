@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let bridge = GhosttyBridge()
     let configManager = ConfigManager()
     private var windowControllers: [MainWindowController] = []
+    private var editorControllers: [EditorWindowController] = []
     private var settingsWC: SettingsWindowController?
     private var commandPalette: CommandPaletteController?
 
@@ -23,14 +24,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configManager.onChange = { [weak self] in
             guard let self else { return }
             self.bridge.reloadConfig()
+            self.applyAppearanceMode()
             NotificationCenter.default.post(name: GhosttyBridge.configDidChange, object: nil)
         }
         configManager.startWatching()
+
+        applyAppearanceMode()
 
         // Restore previous session or create a fresh window
         if !restoreSession() {
             createWindow(tabIn: nil)
         }
+
+        // Listen for sidebar file/diff open requests
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleOpenFilePreview(_:)),
+            name: .sidebarOpenFilePreview, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleOpenDiff(_:)),
+            name: .sidebarOpenDiff, object: nil
+        )
 
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -142,6 +156,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                            action: { [weak self] in self?.splitDown(nil) }))
         items.append(.init(title: "Settings", subtitle: "Cmd+,", icon: "gearshape",
                            action: { [weak self] in self?.openSettings(nil) }))
+        items.append(.init(title: "Toggle Sidebar", subtitle: "Cmd+B", icon: "sidebar.left",
+                           action: { [weak self] in self?.toggleSidebar(nil) }))
         items.append(.init(title: "Reload Config", subtitle: "", icon: "arrow.clockwise",
                            action: { [weak self] in self?.reloadConfig(nil) }))
         items.append(.init(title: "Open Config File", subtitle: "", icon: "doc.text",
@@ -209,6 +225,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configManager.reload()
     }
 
+    // MARK: - Appearance Mode
+
+    private func applyAppearanceMode() {
+        switch SpectraConfig.appearanceMode {
+        case "light":
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:
+            NSApp.appearance = nil  // follow system
+        }
+    }
+
+    @objc func toggleSidebar(_ sender: Any?) {
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
+        wc.toggleSidebarAction(sender)
+    }
+
+    // MARK: - Editor Tabs
+
+    @objc private func handleOpenFilePreview(_ notification: Notification) {
+        guard let url = notification.userInfo?["url"] as? URL else { return }
+        openEditorTab(content: .filePreview(url: url))
+    }
+
+    @objc private func handleOpenDiff(_ notification: Notification) {
+        guard let filePath = notification.userInfo?["filePath"] as? String,
+              let repoURL = notification.userInfo?["repoURL"] as? URL else { return }
+        openEditorTab(content: .diff(filePath: filePath, repoURL: repoURL))
+    }
+
+    private func openEditorTab(content: EditorWindowController.Content) {
+        let editor = EditorWindowController(content: content)
+        editor.onClose = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            self.editorControllers.removeAll { $0 === editor }
+        }
+        editorControllers.append(editor)
+
+        // Add as a tab in the current window group
+        if let keyWindow = NSApp.keyWindow {
+            keyWindow.addTabbedWindow(editor.window!, ordered: .above)
+            editor.window?.makeKeyAndOrderFront(nil)
+        } else {
+            editor.showWindow(nil)
+        }
+    }
+
     @objc func selectTab1(_ sender: Any?) { selectTabByIndex(0) }
     @objc func selectTab2(_ sender: Any?) { selectTabByIndex(1) }
     @objc func selectTab3(_ sender: Any?) { selectTabByIndex(2) }
@@ -264,6 +328,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // View menu
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
+        let toggleSidebarItem = NSMenuItem(
+            title: "Toggle Sidebar",
+            action: #selector(toggleSidebar(_:)),
+            keyEquivalent: "b"
+        )
+        viewMenu.addItem(toggleSidebarItem)
+        viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)

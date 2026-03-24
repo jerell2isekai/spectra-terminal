@@ -44,6 +44,7 @@ enum SpectraConfig {
     # Appearance
     # theme = catppuccin-mocha
     background-opacity = 1
+    # spectra-appearance = system  # system, light, or dark
     # window-padding-x = 8
     # window-padding-y = 4
 
@@ -102,6 +103,9 @@ enum SpectraConfig {
         return min(rows * 18, 2160)  // cap at 4K height
     }
     static var backgroundOpacity: Double { Double(read("background-opacity") ?? "") ?? 1.0 }
+
+    /// Appearance mode: "system" (follows macOS), "light", or "dark"
+    static var appearanceMode: String { read("spectra-appearance", default: "system") }
 
     /// Write a set of key-value pairs to the config file.
     /// Preserves comments and unmodified keys.

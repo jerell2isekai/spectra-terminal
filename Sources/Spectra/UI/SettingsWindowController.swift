@@ -16,6 +16,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var cursorBlinkCheck: NSButton!
     private var paddingXField: NSTextField!
     private var paddingYField: NSTextField!
+    private var appearancePopup: NSPopUpButton!
     private var shellField: NSTextField!
     private var scrollbackField: NSTextField!
     private var windowWidthField: NSTextField!
@@ -142,6 +143,24 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func buildAppearanceTab() {
         let stack = makeStack()
 
+        // Appearance Mode (Light / Dark / System)
+        let modeRow = NSStackView()
+        modeRow.orientation = .horizontal; modeRow.spacing = 8
+        let modeLbl = NSTextField(labelWithString: "Appearance:")
+        modeLbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        modeLbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        appearancePopup = NSPopUpButton()
+        appearancePopup.addItems(withTitles: ["System", "Light", "Dark"])
+        let currentMode = cfg("spectra-appearance", default: "system")
+        switch currentMode {
+        case "light": appearancePopup.selectItem(withTitle: "Light")
+        case "dark":  appearancePopup.selectItem(withTitle: "Dark")
+        default:      appearancePopup.selectItem(withTitle: "System")
+        }
+        modeRow.addArrangedSubview(modeLbl)
+        modeRow.addArrangedSubview(appearancePopup)
+        stack.addArrangedSubview(modeRow)
+
         themeField = addField(to: stack, label: "Theme:", value: cfg("theme"),
                               placeholder: "e.g. catppuccin-mocha")
 
@@ -248,6 +267,12 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             updates["window-height"] = windowHeightField.stringValue
 
         case .appearance:
+            let modeTitle = appearancePopup.titleOfSelectedItem ?? "System"
+            switch modeTitle {
+            case "Light": updates["spectra-appearance"] = "light"
+            case "Dark":  updates["spectra-appearance"] = "dark"
+            default:      updates["spectra-appearance"] = "system"
+            }
             let theme = themeField.stringValue.trimmingCharacters(in: .whitespaces)
             if !theme.isEmpty { updates["theme"] = theme }
             updates["background-opacity"] = String(format: "%.2f", opacitySlider.doubleValue)
