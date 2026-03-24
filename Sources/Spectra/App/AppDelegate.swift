@@ -1,19 +1,91 @@
 import AppKit
+import GhosttyKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private var mainWindowController: MainWindowController?
+    /// Shared bridge — one ghostty_app_t for the whole app.
+    let bridge = GhosttyBridge()
+    private var windowControllers: [MainWindowController] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
 
-        mainWindowController = MainWindowController()
-        mainWindowController?.showWindow(nil)
+        bridge.onNewTab = { [weak self] in
+            self?.newTab(nil)
+        }
+        bridge.onNewWindow = { [weak self] in
+            self?.newWindow(nil)
+        }
+
+        bridge.initialize()
+        createWindow(tabIn: nil)
 
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        bridge.shutdown()
+    }
+
+    // MARK: - Window Management
+
+    func createWindow(tabIn existingWindow: NSWindow?) {
+        let wc = MainWindowController(bridge: bridge)
+        wc.onClose = { [weak self, weak wc] in
+            guard let self, let wc else { return }
+            self.windowControllers.removeAll { $0 === wc }
+        }
+        windowControllers.append(wc)
+
+        if let existingWindow {
+            existingWindow.addTabbedWindow(wc.window!, ordered: .above)
+            wc.window?.makeKeyAndOrderFront(nil)
+        } else {
+            wc.showWindow(nil)
+        }
+    }
+
+    // MARK: - Menu Actions
+
+    @objc func newWindow(_ sender: Any?) {
+        createWindow(tabIn: nil)
+    }
+
+    @objc func newTab(_ sender: Any?) {
+        let keyWindow = NSApp.keyWindow ?? windowControllers.last?.window
+        createWindow(tabIn: keyWindow)
+    }
+
+    @objc func closeTab(_ sender: Any?) {
+        NSApp.keyWindow?.performClose(nil)
+    }
+
+    @objc func selectNextTab(_ sender: Any?) {
+        NSApp.keyWindow?.selectNextTab(nil)
+    }
+
+    @objc func selectPreviousTab(_ sender: Any?) {
+        NSApp.keyWindow?.selectPreviousTab(nil)
+    }
+
+    @objc func selectTab1(_ sender: Any?) { selectTabByIndex(0) }
+    @objc func selectTab2(_ sender: Any?) { selectTabByIndex(1) }
+    @objc func selectTab3(_ sender: Any?) { selectTabByIndex(2) }
+    @objc func selectTab4(_ sender: Any?) { selectTabByIndex(3) }
+    @objc func selectTab5(_ sender: Any?) { selectTabByIndex(4) }
+    @objc func selectTab6(_ sender: Any?) { selectTabByIndex(5) }
+    @objc func selectTab7(_ sender: Any?) { selectTabByIndex(6) }
+    @objc func selectTab8(_ sender: Any?) { selectTabByIndex(7) }
+    @objc func selectTab9(_ sender: Any?) { selectTabByIndex(8) }
+
+    private func selectTabByIndex(_ index: Int) {
+        guard let keyWindow = NSApp.keyWindow,
+              let tabbedWindows = keyWindow.tabbedWindows,
+              index < tabbedWindows.count else { return }
+        tabbedWindows[index].makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Main Menu
@@ -33,8 +105,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Shell menu
         let shellMenuItem = NSMenuItem()
         let shellMenu = NSMenu(title: "Shell")
-        shellMenu.addItem(withTitle: "New Tab", action: #selector(MainWindowController.newTab(_:)), keyEquivalent: "t")
-        shellMenu.addItem(withTitle: "Close Tab", action: #selector(MainWindowController.closeTab(_:)), keyEquivalent: "w")
+        shellMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+        shellMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
+        shellMenu.addItem(.separator())
+        shellMenu.addItem(withTitle: "Close", action: #selector(closeTab(_:)), keyEquivalent: "w")
         shellMenuItem.submenu = shellMenu
         mainMenu.addItem(shellMenuItem)
 
@@ -50,6 +124,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+
+        let nextTabItem = NSMenuItem(title: "Show Next Tab", action: #selector(selectNextTab(_:)), keyEquivalent: "}")
+        nextTabItem.keyEquivalentModifierMask = [.command, .shift]
+        windowMenu.addItem(nextTabItem)
+
+        let prevTabItem = NSMenuItem(title: "Show Previous Tab", action: #selector(selectPreviousTab(_:)), keyEquivalent: "{")
+        prevTabItem.keyEquivalentModifierMask = [.command, .shift]
+        windowMenu.addItem(prevTabItem)
+
+        windowMenu.addItem(.separator())
+
+        // Cmd+1-9 for tab switching
+        for i in 1...9 {
+            let selector = Selector("selectTab\(i):")
+            let item = NSMenuItem(title: "Tab \(i)", action: selector, keyEquivalent: "\(i)")
+            windowMenu.addItem(item)
+        }
+
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
 

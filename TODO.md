@@ -83,12 +83,14 @@ flowchart TD
 
 ## Phase 2：Tab 與視窗管理
 
-- [ ] 實作多 tab 切換（Cmd+1~9 快捷鍵）
-- [ ] Tab bar UI — 使用 `NSTabView` 或自訂 tab bar
-- [ ] 拖曳 tab 重排
-- [ ] Cmd+T 新增 tab、Cmd+W 關閉 tab
-- [ ] 視窗標題動態更新（來自 libghostty 的 `set_title` action）
-- [ ] 多視窗支援
+- [x] 實作多 tab 切換（Cmd+1~9 快捷鍵）— 使用 macOS native window tabs
+- [x] Tab bar UI — macOS 原生 tab bar（`NSWindow.tabbingMode = .preferred`）
+- [x] 拖曳 tab 重排 — 原生 tab bar 免費提供
+- [x] Cmd+T 新增 tab、Cmd+W 關閉 tab
+- [x] 視窗標題動態更新（NotificationCenter from set_title action）
+- [x] 多視窗支援（Cmd+N）
+- [x] Cmd+Shift+]/[ 切換上/下一個 tab
+- [x] Tab bar "+" 按鈕 (`newWindowForTab`)
 
 ## Phase 3：設定系統
 

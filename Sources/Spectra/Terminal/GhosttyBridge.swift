@@ -12,10 +12,13 @@ class GhosttyBridge {
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
 
-    /// Action handlers — set by MainWindowController to respond to libghostty actions.
-    var onSetTitle: ((_ surface: ghostty_surface_t, _ title: String) -> Void)?
+    /// Action handlers — set by AppDelegate for app-level actions.
     var onNewTab: (() -> Void)?
     var onNewWindow: (() -> Void)?
+
+    /// Notification posted when a surface's title changes.
+    /// userInfo: ["surface": ghostty_surface_t, "title": String]
+    static let titleDidChange = Notification.Name("GhosttyBridgeTitleDidChange")
 
     // MARK: - Lifecycle
 
@@ -94,8 +97,13 @@ class GhosttyBridge {
             if let cTitle = action.action.set_title.title {
                 let title = String(cString: cTitle)
                 if target.tag == GHOSTTY_TARGET_SURFACE {
+                    let surface = target.target.surface as Any
                     DispatchQueue.main.async {
-                        bridge.onSetTitle?(target.target.surface, title)
+                        NotificationCenter.default.post(
+                            name: GhosttyBridge.titleDidChange,
+                            object: nil,
+                            userInfo: ["surface": surface, "title": title]
+                        )
                     }
                 }
             }

@@ -1,19 +1,21 @@
 import AppKit
 import GhosttyKit
 
-/// Main window with tab support. Each tab hosts a terminal.
-class MainWindowController: NSWindowController {
-    private let bridge = GhosttyBridge()
-    private var tabs: [TabItem] = []
-    private var activeTabIndex: Int = 0
-    private let contentView = NSView()
+/// Each window (and each native tab) is one MainWindowController with one terminal.
+class MainWindowController: NSWindowController, NSWindowDelegate {
+    private let terminal: TerminalController
+    private let bridge: GhosttyBridge
 
-    struct TabItem {
-        let controller: TerminalController
-        var title: String
-    }
+    /// Called when this window is closed and should be removed from AppDelegate's tracking.
+    var onClose: (() -> Void)?
 
-    init() {
+    /// Shared tabbing identifier so all Spectra windows group together.
+    private static let tabbingID = "com.spectra.terminal"
+
+    init(bridge: GhosttyBridge) {
+        self.bridge = bridge
+        self.terminal = TerminalController(bridge: bridge)
+
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -23,105 +25,62 @@ class MainWindowController: NSWindowController {
         window.title = "Spectra"
         window.center()
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
         window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
         window.minSize = NSSize(width: 400, height: 300)
         window.isReleasedWhenClosed = false
 
+        // Native macOS tab bar
+        window.tabbingMode = .preferred
+        window.tabbingIdentifier = Self.tabbingID
+
         super.init(window: window)
 
+        window.delegate = self
+
+        // Set up the terminal surface
+        let contentView = NSView()
         window.contentView = contentView
+        terminal.attach(to: contentView)
+        terminal.focus()
 
-        // Set up bridge action handlers
-        bridge.onSetTitle = { [weak self] surface, title in
-            self?.handleSetTitle(surface: surface, title: title)
-        }
-        bridge.onNewTab = { [weak self] in
-            self?.createTab()
+        // Handle surface close from libghostty
+        terminal.onClose = { [weak self] in
+            self?.window?.performClose(nil)
         }
 
-        bridge.initialize()
-        createTab()
+        // Listen for title changes via notification (works with multiple windows)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleTitleChange(_:)),
+            name: GhosttyBridge.titleDidChange, object: nil
+        )
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
     }
 
-    // MARK: - Tab Management
-
-    private func createTab() {
-        let terminal = TerminalController(bridge: bridge)
-        let tab = TabItem(controller: terminal, title: "Terminal \(tabs.count + 1)")
-
-        terminal.onClose = { [weak self] in
-            self?.closeTabForController(terminal)
-        }
-
-        tabs.append(tab)
-        activeTabIndex = tabs.count - 1
-        showActiveTab()
-    }
-
-    private func showActiveTab() {
-        guard activeTabIndex < tabs.count else { return }
-
-        // Hide all surfaces (don't remove — surface lifecycle is separate from view hierarchy)
-        for (i, tab) in tabs.enumerated() {
-            if i == activeTabIndex {
-                tab.controller.attach(to: contentView)
-                tab.controller.focus()
-            } else {
-                tab.controller.surface.isHidden = true
-            }
-        }
-
-        window?.title = tabs[activeTabIndex].title
-    }
-
-    private func closeTabForController(_ controller: TerminalController) {
-        guard let idx = tabs.firstIndex(where: { $0.controller === controller }) else { return }
-        let tab = tabs.remove(at: idx)
-        tab.controller.detach()
-
-        if tabs.isEmpty {
-            window?.close()
-        } else {
-            activeTabIndex = min(activeTabIndex, tabs.count - 1)
-            showActiveTab()
+    @objc private func handleTitleChange(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let surface = info["surface"],
+              let title = info["title"] as? String else { return }
+        // Check if this notification is for our surface
+        if let ourSurface = terminal.surface.surface,
+           let notifSurface = surface as? ghostty_surface_t,
+           ourSurface == notifSurface {
+            window?.title = title
         }
     }
 
-    // MARK: - Bridge Action Handlers
+    // MARK: - NSWindowDelegate
 
-    private func handleSetTitle(surface: ghostty_surface_t, title: String) {
-        for i in 0..<tabs.count {
-            if tabs[i].controller.surface.surface == surface {
-                tabs[i].title = title
-                if i == activeTabIndex {
-                    window?.title = title
-                }
-                break
-            }
-        }
+    func windowWillClose(_ notification: Notification) {
+        terminal.detach()
+        onClose?()
     }
 
-    // MARK: - Menu Actions
-
-    @objc func newTab(_ sender: Any?) {
-        createTab()
-    }
-
-    @objc func closeTab(_ sender: Any?) {
-        guard activeTabIndex < tabs.count else {
-            window?.close()
-            return
-        }
-        closeTabForController(tabs[activeTabIndex].controller)
-    }
-
-    deinit {
-        tabs.forEach { $0.controller.detach() }
-        bridge.shutdown()
+    /// Called by the native tab bar "+" button.
+    override func newWindowForTab(_ sender: Any?) {
+        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
+        appDelegate.createWindow(tabIn: window)
     }
 }
