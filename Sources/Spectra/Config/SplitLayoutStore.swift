@@ -2,11 +2,11 @@ import Foundation
 
 /// Persists and restores named split layouts as JSON files in ~/.config/spectra/layouts/.
 enum SplitLayoutStore {
-    /// A serializable split layout tree.
+    /// A serializable split layout tree — includes ratio for each split.
     struct Layout: Codable {
         enum Node: Codable {
             case terminal
-            case split(direction: String, children: [Node])  // "horizontal" or "vertical"
+            case split(direction: String, ratio: Double, children: [Node])
         }
         var root: Node
     }

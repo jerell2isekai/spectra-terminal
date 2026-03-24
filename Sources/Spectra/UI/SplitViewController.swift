@@ -3,16 +3,20 @@ import GhosttyKit
 
 // MARK: - Custom Split Container (replaces NSSplitView)
 
-/// A simple container that divides its bounds between two child views.
-/// Uses manual frame calculation like Ghostty's SplitView, not NSSplitView.
+/// A container that divides its bounds between two child views with a draggable divider.
 class SplitContainerView: NSView {
     let direction: SplitViewController.Direction
-    var ratio: CGFloat = 0.5
-    private let dividerThickness: CGFloat = 1
+    var ratio: CGFloat = 0.5 { didSet { needsLayout = true } }
+
+    /// Visual divider thickness (the colored bar).
+    private let dividerThickness: CGFloat = 4
+    /// Wider invisible hit area for easier mouse targeting.
+    private let hitAreaThickness: CGFloat = 8
 
     let firstView: NSView
     let secondView: NSView
     private let dividerView = NSView()
+    private var isDragging = false
 
     init(direction: SplitViewController.Direction, first: NSView, second: NSView) {
         self.direction = direction
@@ -21,7 +25,8 @@ class SplitContainerView: NSView {
         super.init(frame: .zero)
 
         dividerView.wantsLayer = true
-        dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        dividerView.layer?.backgroundColor = NSColor.gridColor.cgColor
+        dividerView.layer?.cornerRadius = 1
 
         addSubview(firstView)
         addSubview(secondView)
@@ -33,20 +38,73 @@ class SplitContainerView: NSView {
     override func layout() {
         super.layout()
         let b = bounds
+        let dt = dividerThickness
         if direction == .horizontal {
             let splitX = floor(b.width * ratio)
-            firstView.frame = NSRect(x: 0, y: 0, width: splitX, height: b.height)
-            dividerView.frame = NSRect(x: splitX, y: 0, width: dividerThickness, height: b.height)
-            secondView.frame = NSRect(x: splitX + dividerThickness, y: 0,
-                                       width: b.width - splitX - dividerThickness, height: b.height)
+            firstView.frame = NSRect(x: 0, y: 0, width: splitX - dt / 2, height: b.height)
+            dividerView.frame = NSRect(x: splitX - dt / 2, y: 0, width: dt, height: b.height)
+            secondView.frame = NSRect(x: splitX + dt / 2, y: 0,
+                                       width: b.width - splitX - dt / 2, height: b.height)
         } else {
-            // Vertical: first on top, second on bottom (NSView origin is bottom-left)
             let splitY = floor(b.height * (1 - ratio))
-            firstView.frame = NSRect(x: 0, y: splitY + dividerThickness,
-                                      width: b.width, height: b.height - splitY - dividerThickness)
-            dividerView.frame = NSRect(x: 0, y: splitY, width: b.width, height: dividerThickness)
-            secondView.frame = NSRect(x: 0, y: 0, width: b.width, height: splitY)
+            firstView.frame = NSRect(x: 0, y: splitY + dt / 2,
+                                      width: b.width, height: b.height - splitY - dt / 2)
+            dividerView.frame = NSRect(x: 0, y: splitY - dt / 2, width: b.width, height: dt)
+            secondView.frame = NSRect(x: 0, y: 0, width: b.width, height: splitY - dt / 2)
         }
+    }
+
+    // MARK: - Divider Drag Resize
+
+    private func dividerHitRect() -> NSRect {
+        let b = bounds
+        let ht = hitAreaThickness
+        if direction == .horizontal {
+            let splitX = floor(b.width * ratio)
+            return NSRect(x: splitX - ht / 2, y: 0, width: ht, height: b.height)
+        } else {
+            let splitY = floor(b.height * (1 - ratio))
+            return NSRect(x: 0, y: splitY - ht / 2, width: b.width, height: ht)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let loc = convert(event.locationInWindow, from: nil)
+        if dividerHitRect().contains(loc) {
+            isDragging = true
+            dividerView.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging else { super.mouseDragged(with: event); return }
+        let loc = convert(event.locationInWindow, from: nil)
+        let b = bounds
+        let minRatio: CGFloat = 0.1
+        let maxRatio: CGFloat = 0.9
+
+        if direction == .horizontal {
+            ratio = max(minRatio, min(maxRatio, loc.x / b.width))
+        } else {
+            // NSView Y is bottom-up; ratio 0.5 means top half = first
+            ratio = max(minRatio, min(maxRatio, 1 - loc.y / b.height))
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isDragging {
+            isDragging = false
+            dividerView.layer?.backgroundColor = NSColor.gridColor.cgColor
+        } else {
+            super.mouseUp(with: event)
+        }
+    }
+
+    override func resetCursorRects() {
+        let cursor: NSCursor = direction == .horizontal ? .resizeLeftRight : .resizeUpDown
+        addCursorRect(dividerHitRect(), cursor: cursor)
     }
 }
 
@@ -181,8 +239,9 @@ class SplitViewController: NSViewController {
     private func captureNode(_ node: SplitNode) -> SplitLayoutStore.Layout.Node {
         switch node {
         case .terminal: return .terminal
-        case .split(_, let dir, let first, let second):
+        case .split(let container, let dir, let first, let second):
             return .split(direction: dir == .horizontal ? "horizontal" : "vertical",
+                          ratio: Double(container.ratio),
                           children: [captureNode(first), captureNode(second)])
         }
     }
@@ -203,11 +262,16 @@ class SplitViewController: NSViewController {
         switch layoutNode {
         case .terminal:
             return .terminal(TerminalController(bridge: bridge))
-        case .split(let dirStr, let children):
+        case .split(let dirStr, let ratio, let children):
             let dir: Direction = dirStr == "horizontal" ? .horizontal : .vertical
             let first = buildNodeFromLayout(children.count > 0 ? children[0] : .terminal)
             let second = buildNodeFromLayout(children.count > 1 ? children[1] : .terminal)
-            return makeSplitNode(direction: dir, first: first, second: second)
+            let node = makeSplitNode(direction: dir, first: first, second: second)
+            // Apply the saved ratio
+            if case .split(let container, _, _, _) = node {
+                container.ratio = CGFloat(ratio)
+            }
+            return node
         }
     }
 

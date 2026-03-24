@@ -289,45 +289,77 @@ class TerminalSurface: NSView, NSTextInputClient {
     }
 
     @objc private func contextSaveLayout(_ sender: Any?) {
-        guard let wc = window?.windowController as? MainWindowController else { return }
+        guard let wc = window?.windowController as? MainWindowController,
+              let win = window else { return }
+
+        let existing = SplitLayoutStore.list()
         let alert = NSAlert()
         alert.messageText = "Save Split Layout"
-        alert.informativeText = "Enter a name for this layout:"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        field.placeholderString = "e.g. dev-2col"
-        alert.accessoryView = field
+        alert.informativeText = existing.isEmpty
+            ? "Enter a name for this layout:"
+            : "Enter a new name, or pick an existing layout to overwrite:"
+
+        // Fixed-size container with popup + text field
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 60))
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 32, width: 260, height: 25))
+        popup.addItem(withTitle: "New layout")
+        for name in existing {
+            popup.addItem(withTitle: "Overwrite: \(name)")
+            popup.lastItem?.representedObject = name
+        }
+        container.addSubview(popup)
+
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        nameField.placeholderString = "e.g. dev-2col"
+        container.addSubview(nameField)
+
+        alert.accessoryView = container
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window!) { response in
-            guard response == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return }
+        alert.beginSheetModal(for: win) { response in
+            guard response == .alertFirstButtonReturn else { return }
             let layout = wc.splitVC.captureLayout()
-            SplitLayoutStore.save(layout: layout, name: field.stringValue)
+
+            if let overwriteName = popup.selectedItem?.representedObject as? String {
+                SplitLayoutStore.save(layout: layout, name: overwriteName)
+            } else {
+                let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { return }
+                SplitLayoutStore.save(layout: layout, name: name)
+            }
         }
     }
 
     @objc private func contextLoadLayout(_ sender: Any?) {
-        guard let wc = window?.windowController as? MainWindowController else { return }
+        guard let wc = window?.windowController as? MainWindowController,
+              let win = window else { return }
         let names = SplitLayoutStore.list()
         guard !names.isEmpty else {
             let alert = NSAlert()
             alert.messageText = "No Saved Layouts"
             alert.informativeText = "Save a layout first via right-click → Save Layout."
-            alert.runModal()
+            alert.beginSheetModal(for: win) { _ in }
             return
         }
 
         let alert = NSAlert()
         alert.messageText = "Load Split Layout"
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        alert.informativeText = "Choose a layout to restore:"
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 25))
         popup.addItems(withTitles: names)
         alert.accessoryView = popup
         alert.addButton(withTitle: "Load")
+        alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window!) { response in
-            guard response == .alertFirstButtonReturn,
-                  let name = popup.titleOfSelectedItem,
-                  let layout = SplitLayoutStore.load(name: name) else { return }
-            wc.splitVC.applyLayout(layout)
+        alert.beginSheetModal(for: win) { response in
+            guard let name = popup.titleOfSelectedItem else { return }
+            if response == .alertFirstButtonReturn {
+                guard let layout = SplitLayoutStore.load(name: name) else { return }
+                wc.splitVC.applyLayout(layout)
+            } else if response == .alertSecondButtonReturn {
+                SplitLayoutStore.delete(name: name)
+            }
         }
     }
 
