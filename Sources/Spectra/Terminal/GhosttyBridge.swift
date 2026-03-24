@@ -23,6 +23,10 @@ class GhosttyBridge {
     static let titleDidChange = Notification.Name("GhosttyBridgeTitleDidChange")
     /// userInfo: ["config": ghostty_config_t] — posted after config reload or change
     static let configDidChange = Notification.Name("GhosttyBridgeConfigDidChange")
+    /// userInfo: ["direction": ghostty_action_split_direction_e]
+    static let splitRequested = Notification.Name("GhosttyBridgeSplitRequested")
+    /// userInfo: ["direction": ghostty_action_goto_split_e]
+    static let gotoSplitRequested = Notification.Name("GhosttyBridgeGotoSplitRequested")
 
     // MARK: - Lifecycle
 
@@ -144,7 +148,29 @@ class GhosttyBridge {
             return true
 
         case GHOSTTY_ACTION_RENDER:
-            // Rendering is handled by Metal/CAMetalLayer — nothing to do here
+            return true
+
+        case GHOSTTY_ACTION_NEW_SPLIT:
+            let dir = action.action.new_split
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: GhosttyBridge.splitRequested, object: nil,
+                    userInfo: ["direction": dir]
+                )
+            }
+            return true
+
+        case GHOSTTY_ACTION_GOTO_SPLIT:
+            let dir = action.action.goto_split
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: GhosttyBridge.gotoSplitRequested, object: nil,
+                    userInfo: ["direction": dir]
+                )
+            }
+            return true
+
+        case GHOSTTY_ACTION_EQUALIZE_SPLITS:
             return true
 
         case GHOSTTY_ACTION_RELOAD_CONFIG:

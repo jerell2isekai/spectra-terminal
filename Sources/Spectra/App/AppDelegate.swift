@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let configManager = ConfigManager()
     private var windowControllers: [MainWindowController] = []
     private var settingsWC: SettingsWindowController?
+    private var commandPalette: CommandPaletteController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -17,10 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.newWindow(nil)
         }
 
-        // Initialize bridge with Spectra's own config (not ghostty's default files)
         bridge.initialize(configManager: configManager)
 
-        // Watch config file for hot-reload
         configManager.onChange = { [weak self] _ in
             guard let self else { return }
             self.bridge.reloadConfig()
@@ -28,7 +27,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configManager.startWatching()
 
-        createWindow(tabIn: nil)
+        // Restore previous session or create a fresh window
+        if !restoreSession() {
+            createWindow(tabIn: nil)
+        }
+
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -37,8 +40,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        saveSession()
         configManager.stopWatching()
         bridge.shutdown()
+    }
+
+    // MARK: - Session Persistence
+
+    private func saveSession() {
+        var windows: [SessionState.WindowState] = []
+
+        for wc in windowControllers {
+            guard let w = wc.window else { continue }
+            let frame = w.frame
+            let terminals = wc.splitVC.allTerminals()
+            let tabs = terminals.map { tc -> SessionState.TabState in
+                SessionState.TabState(
+                    title: w.title,
+                    workingDirectory: nil  // TODO: read PWD from ghostty surface
+                )
+            }
+            windows.append(SessionState.WindowState(
+                frame: SessionState.FrameState(
+                    x: Double(frame.origin.x), y: Double(frame.origin.y),
+                    width: Double(frame.width), height: Double(frame.height)
+                ),
+                tabs: tabs.isEmpty ? [SessionState.TabState(title: "Terminal", workingDirectory: nil)] : tabs,
+                activeTabIndex: 0
+            ))
+        }
+
+        if !windows.isEmpty {
+            SessionState.save(SessionState(windows: windows))
+        }
+    }
+
+    private func restoreSession() -> Bool {
+        guard let state = SessionState.load() else { return false }
+        guard !state.windows.isEmpty else { return false }
+
+        for ws in state.windows {
+            let wc = MainWindowController(bridge: bridge, configManager: configManager)
+            wc.onClose = { [weak self, weak wc] in
+                guard let self, let wc else { return }
+                self.windowControllers.removeAll { $0 === wc }
+            }
+            windowControllers.append(wc)
+
+            // Restore window frame
+            let frame = NSRect(x: ws.frame.x, y: ws.frame.y,
+                               width: ws.frame.width, height: ws.frame.height)
+            wc.window?.setFrame(frame, display: true)
+            wc.showWindow(nil)
+        }
+
+        return true
     }
 
     // MARK: - Window Management
@@ -57,6 +113,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             wc.showWindow(nil)
         }
+    }
+
+    // MARK: - Command Palette
+
+    private func buildPaletteItems() -> [CommandPaletteController.PaletteItem] {
+        var items: [CommandPaletteController.PaletteItem] = []
+
+        // Open tabs/windows
+        for (i, wc) in windowControllers.enumerated() {
+            let title = wc.window?.title ?? "Window \(i + 1)"
+            items.append(.init(
+                title: title,
+                subtitle: "Window \(i + 1)",
+                icon: "terminal",
+                action: { [weak wc] in wc?.window?.makeKeyAndOrderFront(nil) }
+            ))
+        }
+
+        // Actions
+        items.append(.init(title: "New Tab", subtitle: "Cmd+T", icon: "plus.square",
+                           action: { [weak self] in self?.newTab(nil) }))
+        items.append(.init(title: "New Window", subtitle: "Cmd+N", icon: "macwindow.badge.plus",
+                           action: { [weak self] in self?.newWindow(nil) }))
+        items.append(.init(title: "Split Right", subtitle: "Cmd+D", icon: "rectangle.split.2x1",
+                           action: { [weak self] in self?.splitRight(nil) }))
+        items.append(.init(title: "Split Down", subtitle: "Cmd+Shift+D", icon: "rectangle.split.1x2",
+                           action: { [weak self] in self?.splitDown(nil) }))
+        items.append(.init(title: "Settings", subtitle: "Cmd+,", icon: "gearshape",
+                           action: { [weak self] in self?.openSettings(nil) }))
+        items.append(.init(title: "Reload Config", subtitle: "", icon: "arrow.clockwise",
+                           action: { [weak self] in self?.reloadConfig(nil) }))
+        items.append(.init(title: "Open Config File", subtitle: "", icon: "doc.text",
+                           action: { [weak self] in self?.openConfigFile(nil) }))
+
+        return items
     }
 
     // MARK: - Menu Actions
@@ -80,6 +171,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func selectPreviousTab(_ sender: Any?) {
         NSApp.keyWindow?.selectPreviousTab(nil)
+    }
+
+    @objc func splitRight(_ sender: Any?) {
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
+        wc.splitRight()
+    }
+
+    @objc func splitDown(_ sender: Any?) {
+        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
+        wc.splitDown()
+    }
+
+    @objc func showCommandPalette(_ sender: Any?) {
+        if commandPalette == nil {
+            commandPalette = CommandPaletteController()
+            commandPalette?.itemProvider = { [weak self] in
+                self?.buildPaletteItems() ?? []
+            }
+        }
+        commandPalette?.showPalette()
     }
 
     @objc func openSettings(_ sender: Any?) {
@@ -138,6 +249,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let shellMenu = NSMenu(title: "Shell")
         shellMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
         shellMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
+        shellMenu.addItem(.separator())
+        shellMenu.addItem(withTitle: "Split Right", action: #selector(splitRight(_:)), keyEquivalent: "d")
+        let splitDownItem = NSMenuItem(title: "Split Down", action: #selector(splitDown(_:)), keyEquivalent: "d")
+        splitDownItem.keyEquivalentModifierMask = [.command, .shift]
+        shellMenu.addItem(splitDownItem)
+        shellMenu.addItem(.separator())
+        shellMenu.addItem(withTitle: "Command Palette", action: #selector(showCommandPalette(_:)), keyEquivalent: "p")
         shellMenu.addItem(.separator())
         shellMenu.addItem(withTitle: "Close", action: #selector(closeTab(_:)), keyEquivalent: "w")
         shellMenuItem.submenu = shellMenu

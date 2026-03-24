@@ -1,22 +1,19 @@
 import AppKit
 import GhosttyKit
 
-/// Each window (and each native tab) is one MainWindowController with one terminal.
+/// Each window (and each native tab) is one MainWindowController with a split-capable terminal.
 class MainWindowController: NSWindowController, NSWindowDelegate {
-    private let terminal: TerminalController
+    let splitVC: SplitViewController
     private let bridge: GhosttyBridge
     private let configManager: ConfigManager
 
-    /// Called when this window is closed and should be removed from AppDelegate's tracking.
     var onClose: (() -> Void)?
-
-    /// Shared tabbing identifier so all Spectra windows group together.
     private static let tabbingID = "com.spectra.terminal"
 
     init(bridge: GhosttyBridge, configManager: ConfigManager) {
         self.bridge = bridge
         self.configManager = configManager
-        self.terminal = TerminalController(bridge: bridge)
+        self.splitVC = SplitViewController(bridge: bridge, configManager: configManager)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
@@ -30,27 +27,26 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
         window.minSize = NSSize(width: 400, height: 300)
         window.isReleasedWhenClosed = false
-
-        // Native macOS tab bar
         window.tabbingMode = .preferred
         window.tabbingIdentifier = Self.tabbingID
 
         super.init(window: window)
 
         window.delegate = self
+        window.contentViewController = splitVC
 
-        // Set up the terminal surface
-        let contentView = NSView()
-        window.contentView = contentView
-        terminal.attach(to: contentView)
-        terminal.focus()
+        // Create initial surface after view is in hierarchy
+        if let app = bridge.app {
+            splitVC.allTerminals().first?.surface.createSurface(app: app)
+        }
+        splitVC.focusedTerminal?.focus()
 
-        // Handle surface close from libghostty
-        terminal.onClose = { [weak self] in
+        // Handle last terminal close → close window
+        splitVC.onSurfaceClose = { [weak self] _ in
             self?.window?.performClose(nil)
         }
 
-        // Listen for notifications (works with multiple windows)
+        // Notifications
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleTitleChange(_:)),
             name: GhosttyBridge.titleDidChange, object: nil
@@ -59,8 +55,15 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             self, selector: #selector(handleConfigChange(_:)),
             name: GhosttyBridge.configDidChange, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleSplitRequest(_:)),
+            name: GhosttyBridge.splitRequested, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleGotoSplit(_:)),
+            name: GhosttyBridge.gotoSplitRequested, object: nil
+        )
 
-        // Apply initial config-driven appearance
         applyConfigAppearance()
     }
 
@@ -68,12 +71,20 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) not supported")
     }
 
+    // MARK: - Split Actions
+
+    func splitRight() { splitVC.split(direction: .horizontal) }
+    func splitDown() { splitVC.split(direction: .vertical) }
+
+    // MARK: - Notifications
+
     @objc private func handleTitleChange(_ notification: Notification) {
         guard let info = notification.userInfo,
               let surface = info["surface"],
               let title = info["title"] as? String else { return }
-        // Check if this notification is for our surface
-        if let ourSurface = terminal.surface.surface,
+        // Update title if the focused terminal's surface matches
+        if let focused = splitVC.focusedTerminal,
+           let ourSurface = focused.surface.surface,
            let notifSurface = surface as? ghostty_surface_t,
            ourSurface == notifSurface {
             window?.title = title
@@ -84,10 +95,8 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         applyConfigAppearance()
     }
 
-    /// Apply window-level visual properties from Spectra's config.
     private func applyConfigAppearance() {
         guard let window else { return }
-
         let opacity = max(0.001, min(1.0, configManager.config.appearance.backgroundOpacity))
         if opacity < 1.0 {
             window.isOpaque = false
@@ -98,14 +107,34 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    @objc private func handleSplitRequest(_ notification: Notification) {
+        guard window?.isKeyWindow == true,
+              let dir = notification.userInfo?["direction"] as? ghostty_action_split_direction_e else { return }
+        switch dir {
+        case GHOSTTY_SPLIT_DIRECTION_RIGHT, GHOSTTY_SPLIT_DIRECTION_LEFT:
+            splitRight()
+        case GHOSTTY_SPLIT_DIRECTION_DOWN, GHOSTTY_SPLIT_DIRECTION_UP:
+            splitDown()
+        default:
+            splitRight()
+        }
+    }
+
+    @objc private func handleGotoSplit(_ notification: Notification) {
+        guard window?.isKeyWindow == true,
+              let dir = notification.userInfo?["direction"] as? ghostty_action_goto_split_e else { return }
+        splitVC.focusSplit(dir)
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        terminal.detach()
+        for tc in splitVC.allTerminals() {
+            tc.detach()
+        }
         onClose?()
     }
 
-    /// Called by the native tab bar "+" button.
     override func newWindowForTab(_ sender: Any?) {
         guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
         appDelegate.createWindow(tabIn: window)

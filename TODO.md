@@ -110,11 +110,11 @@ flowchart TD
 
 ## Phase 4：差異化功能
 
-這是 Spectra 與 Ghostty 區隔的重點。以下為候選功能（依優先順序）：
-
-- [ ] 分割面板（Split pane — 水平/垂直分割，獨立終端）
-- [ ] 快速命令面板（Cmd+P 搜尋歷史、切換 tab、執行動作）
-- [ ] Session 持久化（重啟後恢復 tab 和工作目錄）
+- [x] Split pane — 水平 (Cmd+D) / 垂直 (Cmd+Shift+D) 分割，recursive split tree
+- [x] Split navigation — ghostty keybindings (goto_split) + next/prev cycling
+- [x] Split close — 關閉分割面板後自動 collapse tree
+- [x] Command Palette (Cmd+P) — 搜尋 tabs/windows + 快速執行動作（split、settings、config）
+- [x] Session persistence — 退出時保存視窗位置，重啟時恢復
 - [ ] 內建 SSH 管理器（儲存 host、一鍵連線）
 - [ ] 可擴展的 Lua/Swift plugin 系統
 
