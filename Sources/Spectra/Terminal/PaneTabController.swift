@@ -174,6 +174,11 @@ class PaneTabController {
         }
     }
 
+    /// Convenience: create surfaces with a single shared working directory.
+    func createSurfaces(app: ghostty_app_t, workingDirectory: String?) {
+        createSurfaces(app: app, workingDirectories: workingDirectory.map { [$0] })
+    }
+
     // MARK: - Private
 
     private func showOnlyActiveTab() {

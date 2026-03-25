@@ -148,41 +148,28 @@ class TerminalSurface: NSView, NSTextInputClient {
     override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
 
-        let hadMarkedText = markedText.length > 0
         keyTextAccumulator = []
         defer { keyTextAccumulator = nil }
 
-        // Let AppKit / IME process the key — this triggers NSTextInputClient methods
         interpretKeyEvents([event])
-
-        // After interpretKeyEvents, sync preedit state to ghostty
         syncPreedit()
 
-        // Process any accumulated committed text
-        if let accumulated = keyTextAccumulator, !accumulated.isEmpty {
-            for text in accumulated {
-                text.withCString { cStr in
-                    ghostty_surface_text(surface, cStr, UInt(text.utf8.count))
-                }
-            }
-        } else if markedText.length == 0 && !hadMarkedText {
-            // No IME involvement — send as raw key event
-            let mods = Self.ghosttyMods(from: event.modifierFlags)
-            var keyEvent = ghostty_input_key_s()
-            keyEvent.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
-            keyEvent.mods = mods
-            keyEvent.consumed_mods = GHOSTTY_MODS_NONE
-            keyEvent.keycode = UInt32(event.keyCode)
-            keyEvent.composing = false
+        // Always route through ghostty_surface_key so cursor blink resets.
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+        keyEvent.mods = Self.ghosttyMods(from: event.modifierFlags)
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+        keyEvent.keycode = UInt32(event.keyCode)
 
-            if let chars = event.characters, !chars.isEmpty {
-                chars.withCString { cStr in
-                    keyEvent.text = cStr
-                    _ = ghostty_surface_key(surface, keyEvent)
-                }
+        if let accumulated = keyTextAccumulator, !accumulated.isEmpty {
+            keyEvent.composing = false
+            sendKey(&keyEvent, text: accumulated.joined())
+        } else {
+            keyEvent.composing = markedText.length > 0
+            if !keyEvent.composing, let chars = event.characters, !chars.isEmpty {
+                sendKey(&keyEvent, text: chars)
             } else {
-                keyEvent.text = nil
-                _ = ghostty_surface_key(surface, keyEvent)
+                sendKey(&keyEvent, text: nil)
             }
         }
     }
@@ -508,6 +495,20 @@ class TerminalSurface: NSView, NSTextInputClient {
     }
 
     // MARK: - Input Helpers
+
+    /// Send a key event with optional text, handling the withCString lifecycle.
+    private func sendKey(_ keyEvent: inout ghostty_input_key_s, text: String?) {
+        guard let surface else { return }
+        if let text {
+            text.withCString { cStr in
+                keyEvent.text = cStr
+                _ = ghostty_surface_key(surface, keyEvent)
+            }
+        } else {
+            keyEvent.text = nil
+            _ = ghostty_surface_key(surface, keyEvent)
+        }
+    }
 
     static func ghosttyMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var mods: UInt32 = 0

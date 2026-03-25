@@ -276,7 +276,7 @@ class SplitViewController: NSViewController {
         view.layoutSubtreeIfNeeded()
 
         if let app = bridge.app {
-            newPTC.createSurfaces(app: app)
+            newPTC.createSurfaces(app: app, workingDirectory: focusedTerminal?.surface.currentWorkingDirectory)
         }
 
         setExclusiveFocus(newPTC.activeTerminal, in: newPTC)
@@ -311,7 +311,7 @@ class SplitViewController: NSViewController {
               let ptc = focusedPane else { return }
         let tc = ptc.addTab()
         if let app = bridge.app {
-            tc.surface.createSurface(app: app)
+            tc.surface.createSurface(app: app, workingDirectory: focusedTerminal?.surface.currentWorkingDirectory)
         }
         setExclusiveFocus(tc, in: ptc)
         tc.focus()

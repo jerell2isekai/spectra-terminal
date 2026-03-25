@@ -53,6 +53,7 @@ enum SpectraConfig {
     # Cursor
     cursor-style = block
     cursor-style-blink = true
+    cursor-opacity = 1
 
     # Terminal
     scrollback-limit = 10000
