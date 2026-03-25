@@ -4,6 +4,25 @@ import AppKit
 /// Switched via a segmented tab bar in the header.
 class SidebarViewController: NSViewController {
 
+    // MARK: - UI Font
+
+    /// Preferred UI font with CJK support, falling back to system font.
+    private static func uiFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        let psName: String
+        switch weight {
+        case .semibold, .bold, .medium: psName = "Sarasa-UI-TC-SemiBold"
+        case .light:                    psName = "Sarasa-UI-TC-Light"
+        default:               psName = "Sarasa-UI-TC-Regular"
+        }
+        return NSFont(name: psName, size: size) ?? .systemFont(ofSize: size, weight: weight)
+    }
+
+    private static func uiMonoFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        let psName = weight == .bold || weight == .semibold
+            ? "Sarasa-Mono-TC-SemiBold" : "Sarasa-Mono-TC-Regular"
+        return NSFont(name: psName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: weight)
+    }
+
     // MARK: - Tab bar
     private var tabBar: NSSegmentedControl!
     private var openFolderButton: NSButton!
@@ -95,7 +114,7 @@ class SidebarViewController: NSViewController {
         // Folder name label (shows below tab bar area, reuses rootLabel)
         rootLabel = NSTextField(labelWithString: "No Folder Open")
         rootLabel.translatesAutoresizingMaskIntoConstraints = false
-        rootLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        rootLabel.font = Self.uiFont(ofSize: 11, weight: .medium)
         rootLabel.textColor = .tertiaryLabelColor
         rootLabel.lineBreakMode = .byTruncatingMiddle
         rootLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -189,7 +208,7 @@ class SidebarViewController: NSViewController {
         gitChangesTable = NSTableView()
         gitChangesTable.headerView = nil
         gitChangesTable.focusRingType = .none
-        gitChangesTable.rowSizeStyle = .small
+        gitChangesTable.rowSizeStyle = .medium
         gitChangesTable.selectionHighlightStyle = .regular
         gitChangesTable.rowHeight = 20
 
@@ -393,13 +412,13 @@ class SidebarViewController: NSViewController {
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingTail
-            textField.font = .systemFont(ofSize: 13)
+            textField.font = Self.uiFont(ofSize: 13)
             cell.addSubview(textField)
             cell.textField = textField
 
             let badge = NSTextField(labelWithString: "")
             badge.translatesAutoresizingMaskIntoConstraints = false
-            badge.font = .monospacedSystemFont(ofSize: 10, weight: .bold)
+            badge.font = Self.uiMonoFont(ofSize: 11, weight: .bold)
             badge.alignment = .center
             badge.tag = 100
             cell.addSubview(badge)
@@ -445,7 +464,7 @@ class SidebarViewController: NSViewController {
 
             let badge = NSTextField(labelWithString: "")
             badge.translatesAutoresizingMaskIntoConstraints = false
-            badge.font = .monospacedSystemFont(ofSize: 10, weight: .bold)
+            badge.font = Self.uiMonoFont(ofSize: 11, weight: .bold)
             badge.alignment = .center
             badge.tag = 200
             cell.addSubview(badge)
@@ -453,7 +472,7 @@ class SidebarViewController: NSViewController {
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingHead
-            textField.font = .systemFont(ofSize: 12)
+            textField.font = Self.uiFont(ofSize: 13)
             cell.addSubview(textField)
             cell.textField = textField
 
@@ -500,14 +519,14 @@ class SidebarViewController: NSViewController {
 
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
-            textField.font = .systemFont(ofSize: 11, weight: .semibold)
+            textField.font = Self.uiFont(ofSize: 13, weight: .semibold)
             textField.lineBreakMode = .byTruncatingTail
             cell.addSubview(textField)
             cell.textField = textField
 
             let countLabel = NSTextField(labelWithString: "")
             countLabel.translatesAutoresizingMaskIntoConstraints = false
-            countLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+            countLabel.font = Self.uiMonoFont(ofSize: 11, weight: .medium)
             countLabel.alignment = .center
             countLabel.tag = 302
             cell.addSubview(countLabel)
@@ -539,10 +558,14 @@ class SidebarViewController: NSViewController {
         if let countLabel = cell.viewWithTag(302) as? NSTextField {
             if changeCount > 0 {
                 countLabel.stringValue = "\(changeCount)"
-                countLabel.textColor = .systemOrange
+                countLabel.textColor = FileNode.GitStatus.modified.color
             } else {
                 countLabel.stringValue = "✓"
-                countLabel.textColor = .systemGreen
+                countLabel.textColor = NSColor(name: nil) { appearance in
+                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                        ? NSColor.systemGreen
+                        : NSColor(red: 0.15, green: 0.55, blue: 0.20, alpha: 1.0)
+                }
             }
         }
 
@@ -647,14 +670,12 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard tableView === gitChangesTable, row < gitRows.count else { return 20 }
         switch gitRows[row] {
-        case .repoHeader: return 24
+        case .repoHeader: return 22
         case .changedFile: return 20
         }
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
-        guard tableView === gitChangesTable, row < gitRows.count else { return false }
-        if case .repoHeader = gitRows[row] { return true }
         return false
     }
 }

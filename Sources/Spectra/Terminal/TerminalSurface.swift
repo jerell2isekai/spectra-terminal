@@ -306,16 +306,54 @@ class TerminalSurface: NSView, NSTextInputClient {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        menu.addItem(withTitle: "New Pane Tab", action: #selector(contextNewPaneTab(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Close Pane Tab", action: #selector(contextClosePaneTab(_:)), keyEquivalent: "")
+
+        func item(_ title: String, _ action: Selector, symbol: String) -> NSMenuItem {
+            let mi = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            mi.target = self
+            mi.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            return mi
+        }
+
+        menu.addItem(item("Copy", #selector(contextCopy(_:)), symbol: "doc.on.doc"))
+        menu.addItem(item("Paste", #selector(contextPaste(_:)), symbol: "doc.on.clipboard"))
+
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Split Right", action: #selector(contextSplitRight(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Split Down", action: #selector(contextSplitDown(_:)), keyEquivalent: "")
+        menu.addItem(item("Split Right", #selector(contextSplitRight(_:)), symbol: "rectangle.split.2x1"))
+        menu.addItem(item("Split Left", #selector(contextSplitLeft(_:)), symbol: "rectangle.split.2x1"))
+        menu.addItem(item("Split Down", #selector(contextSplitDown(_:)), symbol: "rectangle.split.1x2"))
+        menu.addItem(item("Split Up", #selector(contextSplitUp(_:)), symbol: "rectangle.split.1x2"))
+
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Save Layout…", action: #selector(contextSaveLayout(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Load Layout…", action: #selector(contextLoadLayout(_:)), keyEquivalent: "")
-        for item in menu.items { item.target = self }
+        menu.addItem(item("New Pane Tab", #selector(contextNewPaneTab(_:)), symbol: "plus.square"))
+        menu.addItem(item("Close Pane Tab", #selector(contextClosePaneTab(_:)), symbol: "xmark.square"))
+
+        menu.addItem(.separator())
+        menu.addItem(item("Toggle Sidebar", #selector(contextToggleSidebar(_:)), symbol: "sidebar.left"))
+
+        menu.addItem(.separator())
+        menu.addItem(item("Save Layout…", #selector(contextSaveLayout(_:)), symbol: "square.and.arrow.down"))
+        menu.addItem(item("Load Layout…", #selector(contextLoadLayout(_:)), symbol: "square.and.arrow.up"))
+
         return menu
+    }
+
+    @objc private func contextCopy(_ sender: Any?) {
+        guard let surface, ghostty_surface_has_selection(surface) else { return }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text),
+              let cStr = text.text else { return }
+        let str = String(cString: cStr)
+        ghostty_surface_free_text(surface, &text)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(str, forType: .string)
+    }
+
+    @objc private func contextPaste(_ sender: Any?) {
+        guard let surface,
+              let str = NSPasteboard.general.string(forType: .string) else { return }
+        str.withCString { cStr in
+            ghostty_surface_text(surface, cStr, UInt(str.utf8.count))
+        }
     }
 
     @objc private func contextNewPaneTab(_ sender: Any?) {
@@ -333,9 +371,24 @@ class TerminalSurface: NSView, NSTextInputClient {
         wc.splitRight()
     }
 
+    @objc private func contextSplitLeft(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.splitLeft()
+    }
+
     @objc private func contextSplitDown(_ sender: Any?) {
         guard let wc = window?.windowController as? MainWindowController else { return }
         wc.splitDown()
+    }
+
+    @objc private func contextSplitUp(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.splitUp()
+    }
+
+    @objc private func contextToggleSidebar(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.toggleSidebarAction(sender)
     }
 
     @objc private func contextSaveLayout(_ sender: Any?) {

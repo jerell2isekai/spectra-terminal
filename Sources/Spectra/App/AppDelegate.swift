@@ -409,7 +409,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let toggleSidebarItem = NSMenuItem(
             title: "Toggle Sidebar",
             action: #selector(toggleSidebar(_:)),
-            keyEquivalent: "b"
+            keyEquivalent: "\\"
         )
         viewMenu.addItem(toggleSidebarItem)
         viewMenu.addItem(.separator())

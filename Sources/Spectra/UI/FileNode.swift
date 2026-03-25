@@ -20,10 +20,14 @@ class FileNode: NSObject {
         var color: NSColor {
             switch self {
             case .unmodified: return .labelColor
-            case .modified:   return .systemOrange
+            case .modified:   return NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 0.95, green: 0.65, blue: 0.15, alpha: 1.0)
+                    : NSColor(red: 0.75, green: 0.40, blue: 0.0, alpha: 1.0)
+            }
             case .added:      return .systemGreen
             case .deleted:    return .systemRed
-            case .untracked:  return .tertiaryLabelColor
+            case .untracked:  return .secondaryLabelColor
             case .conflicted: return .systemYellow
             }
         }

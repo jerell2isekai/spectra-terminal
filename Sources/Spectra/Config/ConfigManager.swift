@@ -26,7 +26,33 @@ class ConfigManager {
         path.withCString { cPath in
             ghostty_config_load_file(cfg, cPath)
         }
+
+        // Re-apply cursor settings explicitly after file load, since they
+        // may appear after the theme line and some ghostty versions process
+        // theme settings as a post-pass that can override later config lines.
+        let cursorStyle = SpectraConfig.read("cursor-style", default: "block")
+        let cursorBlink = SpectraConfig.read("cursor-style-blink", default: "true")
+        let cursorOverrides = "cursor-style = \(cursorStyle)\ncursor-style-blink = \(cursorBlink)\n"
+        let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("spectra-cursor.conf")
+        try? cursorOverrides.write(to: tmpURL, atomically: true, encoding: .utf8)
+        tmpURL.path.withCString { cPath in
+            ghostty_config_load_file(cfg, cPath)
+        }
+        try? FileManager.default.removeItem(at: tmpURL)
+
         ghostty_config_finalize(cfg)
+
+        // Log any config diagnostics (parse errors or warnings)
+        let diagCount = ghostty_config_diagnostics_count(cfg)
+        if diagCount > 0 {
+            for i in 0..<diagCount {
+                let diag = ghostty_config_get_diagnostic(cfg, i)
+                if let msg = diag.message {
+                    print("[Config] diagnostic: \(String(cString: msg))")
+                }
+            }
+        }
+
         return cfg
     }
 

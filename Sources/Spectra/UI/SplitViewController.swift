@@ -252,7 +252,7 @@ class SplitViewController: NSViewController {
 
     // MARK: - Public API
 
-    func split(direction: Direction) {
+    func split(direction: Direction, before: Bool = false) {
         guard focusedTerminal != nil,
               let currentPTC = focusedPane else { return }
 
@@ -260,11 +260,14 @@ class SplitViewController: NSViewController {
         newPTC.addTab()
         setupPaneCallbacks(for: [newPTC])
 
+        let first: SplitNode = before ? .pane(newPTC) : .pane(currentPTC)
+        let second: SplitNode = before ? .pane(currentPTC) : .pane(newPTC)
+
         rootNode = rebuildTree(rootNode) { node in
             if case .pane(let ptc) = node, ptc === currentPTC {
                 return makeSplitNode(direction: direction,
-                                     first: .pane(ptc),
-                                     second: .pane(newPTC))
+                                     first: first,
+                                     second: second)
             }
             return nil
         }

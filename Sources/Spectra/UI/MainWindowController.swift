@@ -11,7 +11,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     var onClose: (() -> Void)?
     private static let tabbingID = "com.spectra.terminal"
-    private static let toolbarID = NSToolbar.Identifier("com.spectra.mainToolbar")
 
     init(bridge: GhosttyBridge, configManager: ConfigManager) {
         self.bridge = bridge
@@ -26,16 +25,12 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: CGFloat(SpectraConfig.windowWidth),
                                 height: CGFloat(SpectraConfig.windowHeight)),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Spectra"
         window.center()
-        // Only make titlebar transparent when fully opaque; otherwise keep
-        // the standard vibrancy titlebar so it doesn't become invisible.
-        let hasTransparency = SpectraConfig.backgroundOpacity < 1.0
-        window.titlebarAppearsTransparent = !hasTransparency
         window.backgroundColor = .windowBackgroundColor
         window.minSize = NSSize(width: 400, height: 300)
         window.isReleasedWhenClosed = false
@@ -50,9 +45,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         // Restore sidebar state from last session
         let sidebarWasOpen = UserDefaults.standard.bool(forKey: "sidebarOpen")
         workspaceVC.setSidebarCollapsed(!sidebarWasOpen, animated: false)
-
-        // Setup toolbar
-        setupToolbar()
 
         // Create initial surface after view is in hierarchy
         if let app = bridge.app {
@@ -90,21 +82,12 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) not supported")
     }
 
-    // MARK: - Toolbar
-
-    private func setupToolbar() {
-        let toolbar = NSToolbar(identifier: Self.toolbarID)
-        toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = false
-        window?.toolbar = toolbar
-        window?.toolbarStyle = .unified
-    }
-
     // MARK: - Split Actions
 
     func splitRight() { splitVC.split(direction: .horizontal) }
+    func splitLeft() { splitVC.split(direction: .horizontal, before: true) }
     func splitDown() { splitVC.split(direction: .vertical) }
+    func splitUp() { splitVC.split(direction: .vertical, before: true) }
 
     /// Current sidebar root directory path (nil if not set).
     var sidebarRootPath: String? {
@@ -145,7 +128,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let info = notification.userInfo,
               let surface = info["surface"],
               let title = info["title"] as? String else { return }
-        // Update title if the focused terminal's surface matches
         if let focused = splitVC.focusedTerminal,
            let ourSurface = focused.surface.surface,
            let notifSurface = surface as? ghostty_surface_t,
@@ -164,12 +146,10 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         if opacity < 1.0 {
             window.isOpaque = false
             window.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.001)
-            window.titlebarAppearsTransparent = false  // keep titlebar visible
             window.hasShadow = true
         } else {
             window.isOpaque = true
             window.backgroundColor = .windowBackgroundColor
-            window.titlebarAppearsTransparent = true   // sleek look when opaque
         }
     }
 
@@ -177,10 +157,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         guard window?.isKeyWindow == true,
               let dir = notification.userInfo?["direction"] as? ghostty_action_split_direction_e else { return }
         switch dir {
-        case GHOSTTY_SPLIT_DIRECTION_RIGHT, GHOSTTY_SPLIT_DIRECTION_LEFT:
+        case GHOSTTY_SPLIT_DIRECTION_RIGHT:
             splitRight()
-        case GHOSTTY_SPLIT_DIRECTION_DOWN, GHOSTTY_SPLIT_DIRECTION_UP:
+        case GHOSTTY_SPLIT_DIRECTION_LEFT:
+            splitLeft()
+        case GHOSTTY_SPLIT_DIRECTION_DOWN:
             splitDown()
+        case GHOSTTY_SPLIT_DIRECTION_UP:
+            splitUp()
         default:
             splitRight()
         }
@@ -207,38 +191,3 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-// MARK: - NSToolbarDelegate
-
-extension MainWindowController: NSToolbarDelegate {
-
-    func toolbar(_ toolbar: NSToolbar,
-                 itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
-                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case .toggleSidebar:
-            return NSToolbarItem(itemIdentifier: .toggleSidebar)
-
-        case .sidebarTrackingSeparator:
-            return NSTrackingSeparatorToolbarItem(
-                identifier: .sidebarTrackingSeparator,
-                splitView: workspaceVC.splitView,
-                dividerIndex: 0
-            )
-
-        default:
-            return nil
-        }
-    }
-
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return [
-            .toggleSidebar,
-            .sidebarTrackingSeparator,
-            .flexibleSpace,
-        ]
-    }
-
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return toolbarDefaultItemIdentifiers(toolbar)
-    }
-}
