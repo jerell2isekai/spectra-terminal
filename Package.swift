@@ -21,6 +21,7 @@ let package = Package(
             path: "Sources/Spectra",
             resources: [
                 .copy("Resources/AppIcon.icns"),
+                .copy("Resources/Credits.html"),
                 .copy("Resources/terminfo"),
                 .copy("Resources/ghostty"),
             ],
