@@ -1,6 +1,21 @@
 import AppKit
 import GhosttyKit
 
+// MARK: - Split Divider
+
+/// Divider rendered via draw(_:) — the most reliable AppKit rendering path.
+/// Avoids layer?.backgroundColor which is unreliable in layer-backed hierarchies.
+private class SplitDividerView: NSView {
+    var color: NSColor = SpectraConfig.splitDividerColor {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        color.setFill()
+        bounds.fill()
+    }
+}
+
 // MARK: - Custom Split Container (replaces NSSplitView)
 
 /// A container that divides its bounds between two child views with a draggable divider.
@@ -20,7 +35,10 @@ class SplitContainerView: NSView {
 
     let firstView: NSView
     let secondView: NSView
-    private let dividerView = NSView()
+    private let dividerView = SplitDividerView()
+    private var baseDividerColor = SpectraConfig.splitDividerColor {
+        didSet { if !isDragging { dividerView.color = baseDividerColor } }
+    }
     private var isDragging = false
 
     init(direction: SplitViewController.Direction, first: NSView, second: NSView) {
@@ -29,9 +47,11 @@ class SplitContainerView: NSView {
         self.secondView = second
         super.init(frame: .zero)
 
-        dividerView.wantsLayer = true
-        dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        dividerView.layer?.cornerRadius = 1
+        // Children are positioned by manual frame in layout(), not Auto Layout.
+        // Reset in case a child was previously root with translatesAutoresizingMaskIntoConstraints = false.
+        firstView.translatesAutoresizingMaskIntoConstraints = true
+        secondView.translatesAutoresizingMaskIntoConstraints = true
+        dividerView.color = baseDividerColor
 
         addSubview(firstView)
         addSubview(secondView)
@@ -39,13 +59,6 @@ class SplitContainerView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        super.updateLayer()
-        dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
-    }
 
     override func layout() {
         super.layout()
@@ -85,7 +98,7 @@ class SplitContainerView: NSView {
         let loc = convert(event.locationInWindow, from: nil)
         if dividerHitRect().contains(loc) {
             isDragging = true
-            dividerView.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            dividerView.color = .controlAccentColor
         } else {
             super.mouseDown(with: event)
         }
@@ -109,10 +122,14 @@ class SplitContainerView: NSView {
     override func mouseUp(with event: NSEvent) {
         if isDragging {
             isDragging = false
-            dividerView.layer?.backgroundColor = NSColor.separatorColor.cgColor
+            dividerView.color = baseDividerColor
         } else {
             super.mouseUp(with: event)
         }
+    }
+
+    func refreshDividerColor() {
+        baseDividerColor = SpectraConfig.splitDividerColor
     }
 
     override func resetCursorRects() {
@@ -195,6 +212,10 @@ class SplitViewController: NSViewController {
             self, selector: #selector(handleSurfaceFocus(_:)),
             name: .terminalSurfaceDidFocus, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleConfigChange(_:)),
+            name: GhosttyBridge.configDidChange, object: nil
+        )
     }
 
     @objc private func handleSurfaceFocus(_ notification: Notification) {
@@ -206,6 +227,10 @@ class SplitViewController: NSViewController {
                 return
             }
         }
+    }
+
+    @objc private func handleConfigChange(_ notification: Notification) {
+        refreshDividerColors(in: rootNode)
     }
 
     /// Ensure only one terminal has ghostty focus.
@@ -245,6 +270,10 @@ class SplitViewController: NSViewController {
         }
 
         reinstallViews()
+
+        // Force layout so views have proper bounds before surface creation.
+        // ghostty's Metal sublayer frame is set at creation time; zero → stays zero.
+        view.layoutSubtreeIfNeeded()
 
         if let app = bridge.app {
             newPTC.createSurfaces(app: app)
@@ -374,6 +403,10 @@ class SplitViewController: NSViewController {
         rootNode = buildNodeFromLayout(layout.root, paths: &paths)
         reinstallViews()
         setupPaneCallbacks(for: allPanes())
+
+        // Force layout so views have proper bounds before surface creation.
+        view.layoutSubtreeIfNeeded()
+
         if let app = bridge.app {
             for tc in allTerminals() {
                 let wd = paths[ObjectIdentifier(tc)]
@@ -456,6 +489,17 @@ class SplitViewController: NSViewController {
     private func makeSplitNode(direction: Direction, first: SplitNode, second: SplitNode) -> SplitNode {
         let container = SplitContainerView(direction: direction, first: first.view, second: second.view)
         return .split(container, direction: direction, first: first, second: second)
+    }
+
+    private func refreshDividerColors(in node: SplitNode) {
+        switch node {
+        case .pane:
+            return
+        case .split(let container, _, let first, let second):
+            container.refreshDividerColor()
+            refreshDividerColors(in: first)
+            refreshDividerColors(in: second)
+        }
     }
 
     /// Walk the tree, applying a transform function.

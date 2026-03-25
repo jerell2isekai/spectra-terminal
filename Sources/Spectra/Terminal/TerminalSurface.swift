@@ -64,7 +64,10 @@ class TerminalSurface: NSView, NSTextInputClient {
         }
         if self.surface == nil {
             print("[TerminalSurface] ghostty_surface_new() failed")
+            return
         }
+
+        syncSurfaceGeometry()
     }
 
     /// Send a command to the terminal (text + Enter key event).
@@ -119,20 +122,25 @@ class TerminalSurface: NSView, NSTextInputClient {
 
     // MARK: - Layout
 
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
+    private func syncSurfaceGeometry(size: NSSize? = nil) {
         guard let surface else { return }
+
+        let resolvedSize = size ?? bounds.size
         let scale = window?.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
         ghostty_surface_set_content_scale(surface, Double(scale), Double(scale))
-        let backed = convertToBacking(newSize)
+
+        let backed = convertToBacking(resolvedSize)
         ghostty_surface_set_size(surface, UInt32(backed.width), UInt32(backed.height))
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        syncSurfaceGeometry(size: newSize)
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard let surface, let screen = window?.screen else { return }
-        let scale = screen.backingScaleFactor
-        ghostty_surface_set_content_scale(surface, Double(scale), Double(scale))
+        syncSurfaceGeometry()
     }
 
     // MARK: - Keyboard Events (IME-aware)

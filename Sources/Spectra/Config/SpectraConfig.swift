@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Spectra's config file in ghostty-compatible `key = value` format.
@@ -45,6 +46,7 @@ enum SpectraConfig {
     # theme = catppuccin-mocha
     background-opacity = 1
     # spectra-appearance = system  # system, light, or dark
+    # split-divider-color = #A8C0B4
     # window-padding-x = 8
     # window-padding-y = 4
 
@@ -106,6 +108,12 @@ enum SpectraConfig {
 
     /// Appearance mode: "system" (follows macOS), "light", or "dark"
     static var appearanceMode: String { read("spectra-appearance", default: "system") }
+
+    /// Divider color for split panes. Uses an opaque fallback so the divider
+    /// remains visible even when the window background is translucent.
+    static var splitDividerColor: NSColor {
+        parseHexColor(read("split-divider-color")) ?? defaultSplitDividerColor
+    }
 
     /// Write a set of key-value pairs to the config file.
     /// Preserves comments and unmodified keys.
@@ -185,6 +193,64 @@ enum SpectraConfig {
 
     // MARK: - Parser
 
+    private static var defaultSplitDividerColor: NSColor {
+        NSColor(name: nil) { appearance in
+            if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+                return NSColor(srgbRed: 0.72, green: 0.78, blue: 0.75, alpha: 1.0)
+            }
+            return NSColor(srgbRed: 0.43, green: 0.49, blue: 0.46, alpha: 1.0)
+        }
+    }
+
+    private static func parseHexColor(_ rawValue: String?) -> NSColor? {
+        guard var hex = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines), !hex.isEmpty else {
+            return nil
+        }
+
+        if (hex.hasPrefix("\"") && hex.hasSuffix("\"")) ||
+            (hex.hasPrefix("'") && hex.hasSuffix("'")) {
+            hex.removeFirst()
+            hex.removeLast()
+        }
+
+        if hex.hasPrefix("#") {
+            hex.removeFirst()
+        }
+
+        if hex.count == 3 {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+
+        guard hex.count == 6 || hex.count == 8,
+              let value = UInt64(hex, radix: 16) else {
+            return nil
+        }
+
+        let red: UInt64
+        let green: UInt64
+        let blue: UInt64
+        let alpha: UInt64
+
+        if hex.count == 8 {
+            red = (value >> 24) & 0xFF
+            green = (value >> 16) & 0xFF
+            blue = (value >> 8) & 0xFF
+            alpha = value & 0xFF
+        } else {
+            red = (value >> 16) & 0xFF
+            green = (value >> 8) & 0xFF
+            blue = value & 0xFF
+            alpha = 0xFF
+        }
+
+        return NSColor(
+            srgbRed: CGFloat(red) / 255.0,
+            green: CGFloat(green) / 255.0,
+            blue: CGFloat(blue) / 255.0,
+            alpha: CGFloat(alpha) / 255.0
+        )
+    }
+
     /// Parse ghostty `key = value` format into a dictionary.
     private static func parseKeyValue(_ content: String) -> [String: String] {
         var result: [String: String] = [:]
@@ -194,9 +260,11 @@ enum SpectraConfig {
             guard let eqIdx = trimmed.firstIndex(of: "=") else { continue }
             let key = trimmed[trimmed.startIndex..<eqIdx].trimmingCharacters(in: .whitespaces)
             var value = trimmed[trimmed.index(after: eqIdx)...].trimmingCharacters(in: .whitespaces)
-            // Strip inline comment
+            // Strip inline comments, but preserve hex color values like #A8C0B4.
             if let hashIdx = value.firstIndex(of: "#"),
-               !value.hasPrefix("\"") {
+               hashIdx != value.startIndex,
+               !value.hasPrefix("\""),
+               value[value.index(before: hashIdx)].isWhitespace {
                 value = value[value.startIndex..<hashIdx].trimmingCharacters(in: .whitespaces)
             }
             result[key] = value
