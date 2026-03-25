@@ -78,20 +78,19 @@ class TerminalSurface: NSView, NSTextInputClient {
             ghostty_surface_text(surface, cStr, UInt(command.utf8.count))
         }
         // Send Return key press (macOS keycode 36)
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_PRESS
-        keyEvent.mods = GHOSTTY_MODS_NONE
-        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
-        keyEvent.keycode = 36
-        keyEvent.composing = false
-        "\r".withCString { cStr in
-            keyEvent.text = cStr
-            _ = ghostty_surface_key(surface, keyEvent)
-        }
+        var press = ghostty_input_key_s()
+        press.action = GHOSTTY_ACTION_PRESS
+        press.keycode = 36
+        press.mods = GHOSTTY_MODS_NONE
+        press.consumed_mods = GHOSTTY_MODS_NONE
+        sendKey(&press, text: "\r")
         // Send Return key release
-        keyEvent.action = GHOSTTY_ACTION_RELEASE
-        keyEvent.text = nil
-        _ = ghostty_surface_key(surface, keyEvent)
+        var release = ghostty_input_key_s()
+        release.action = GHOSTTY_ACTION_RELEASE
+        release.keycode = 36
+        release.mods = GHOSTTY_MODS_NONE
+        release.consumed_mods = GHOSTTY_MODS_NONE
+        _ = ghostty_surface_key(surface, release)
     }
 
     func destroySurface() {
@@ -148,41 +147,34 @@ class TerminalSurface: NSView, NSTextInputClient {
     override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
 
+        let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+
         keyTextAccumulator = []
         defer { keyTextAccumulator = nil }
+
+        let markedTextBefore = markedText.length > 0
 
         interpretKeyEvents([event])
         syncPreedit()
 
-        // Always route through ghostty_surface_key so cursor blink resets.
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
-        keyEvent.mods = Self.ghosttyMods(from: event.modifierFlags)
-        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
-        keyEvent.keycode = UInt32(event.keyCode)
-
         if let accumulated = keyTextAccumulator, !accumulated.isEmpty {
-            keyEvent.composing = false
-            sendKey(&keyEvent, text: accumulated.joined())
-        } else {
-            keyEvent.composing = markedText.length > 0
-            if !keyEvent.composing, let chars = event.characters, !chars.isEmpty {
-                sendKey(&keyEvent, text: chars)
-            } else {
-                sendKey(&keyEvent, text: nil)
+            // IME composed text — send each piece with composing = false
+            for text in accumulated {
+                var keyEvent = event.ghosttyKeyEvent(action)
+                keyEvent.composing = false
+                sendKey(&keyEvent, text: text)
             }
+        } else {
+            // Normal key event — use filtered ghosttyCharacters (no PUA function keys)
+            var keyEvent = event.ghosttyKeyEvent(action)
+            keyEvent.composing = markedText.length > 0 || markedTextBefore
+            sendKey(&keyEvent, text: keyEvent.composing ? nil : event.ghosttyCharacters)
         }
     }
 
     override func keyUp(with event: NSEvent) {
         guard let surface else { return }
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_RELEASE
-        keyEvent.mods = Self.ghosttyMods(from: event.modifierFlags)
-        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
-        keyEvent.keycode = UInt32(event.keyCode)
-        keyEvent.text = nil
-        keyEvent.composing = false
+        var keyEvent = event.ghosttyKeyEvent(GHOSTTY_ACTION_RELEASE)
         _ = ghostty_surface_key(surface, keyEvent)
     }
 
@@ -193,13 +185,7 @@ class TerminalSurface: NSView, NSTextInputClient {
         previousModifierFlags = current
         let isRelease = current.rawValue < previous.rawValue
 
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = isRelease ? GHOSTTY_ACTION_RELEASE : GHOSTTY_ACTION_PRESS
-        keyEvent.mods = Self.ghosttyMods(from: event.modifierFlags)
-        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
-        keyEvent.keycode = UInt32(event.keyCode)
-        keyEvent.text = nil
-        keyEvent.composing = false
+        let keyEvent = event.ghosttyKeyEvent(isRelease ? GHOSTTY_ACTION_RELEASE : GHOSTTY_ACTION_PRESS)
         _ = ghostty_surface_key(surface, keyEvent)
     }
 
@@ -550,9 +536,12 @@ class TerminalSurface: NSView, NSTextInputClient {
     // MARK: - Input Helpers
 
     /// Send a key event with optional text, handling the withCString lifecycle.
+    /// Only sends text for printable characters (codepoint >= 0x20); control characters
+    /// are encoded by libghostty's KeyEncoder directly.
     private func sendKey(_ keyEvent: inout ghostty_input_key_s, text: String?) {
         guard let surface else { return }
-        if let text {
+        if let text, !text.isEmpty,
+           let codepoint = text.utf8.first, codepoint >= 0x20 {
             text.withCString { cStr in
                 keyEvent.text = cStr
                 _ = ghostty_surface_key(surface, keyEvent)
@@ -583,5 +572,61 @@ class TerminalSurface: NSView, NSTextInputClient {
         case .mayBegin:   return Int32(GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN.rawValue)
         default:          return Int32(GHOSTTY_MOUSE_MOMENTUM_NONE.rawValue)
         }
+    }
+}
+
+// MARK: - NSEvent Ghostty Extensions
+
+extension NSEvent {
+    /// Create a ghostty_input_key_s from this NSEvent.
+    ///
+    /// Populates keycode, mods, consumed_mods, and unshifted_codepoint.
+    /// Does NOT set text or composing — caller must handle those.
+    func ghosttyKeyEvent(_ action: ghostty_input_action_e) -> ghostty_input_key_s {
+        var key_ev = ghostty_input_key_s()
+        key_ev.action = action
+        key_ev.keycode = UInt32(keyCode)
+        key_ev.text = nil
+        key_ev.composing = false
+
+        key_ev.mods = TerminalSurface.ghosttyMods(from: modifierFlags)
+        // Heuristic: control and command never contribute to text translation.
+        key_ev.consumed_mods = TerminalSurface.ghosttyMods(
+            from: modifierFlags.subtracting([.control, .command]))
+
+        // Unshifted codepoint for Kitty keyboard protocol.
+        key_ev.unshifted_codepoint = 0
+        if type == .keyDown || type == .keyUp {
+            if let chars = characters(byApplyingModifiers: []),
+               let codepoint = chars.unicodeScalars.first {
+                key_ev.unshifted_codepoint = codepoint.value
+            }
+        }
+
+        return key_ev
+    }
+
+    /// Returns filtered characters suitable for ghostty_surface_key text field.
+    ///
+    /// Filters out:
+    /// - PUA function key characters (0xF700-0xF8FF) — arrow keys, F-keys, etc.
+    /// - Control characters (< 0x20) — re-derived without control modifier.
+    var ghosttyCharacters: String? {
+        guard let characters else { return nil }
+
+        if characters.count == 1,
+           let scalar = characters.unicodeScalars.first {
+            // Control characters are encoded by libghostty's KeyEncoder directly.
+            if scalar.value < 0x20 {
+                return self.characters(byApplyingModifiers: modifierFlags.subtracting(.control))
+            }
+
+            // Function keys in the macOS PUA range must not be sent as text.
+            if scalar.value >= 0xF700 && scalar.value <= 0xF8FF {
+                return nil
+            }
+        }
+
+        return characters
     }
 }

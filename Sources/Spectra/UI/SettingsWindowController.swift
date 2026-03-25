@@ -7,8 +7,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private let containerView = NSView()
 
     // General tab
-    private var shellField: NSTextField!
-    private var scrollbackField: NSTextField!
     private var windowWidthField: NSTextField!
     private var windowHeightField: NSTextField!
 
@@ -20,12 +18,12 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var blurPopup: NSPopUpButton!
     private var cursorPopup: NSPopUpButton!
     private var cursorBlinkCheck: NSButton!
-    private var cursorLockCheck: NSButton!
     private var paddingXField: NSTextField!
     private var paddingYField: NSTextField!
     private var paddingBalancePopup: NSPopUpButton!
 
     // Font tab
+    private static var cachedMonospaceFonts: [String]?
     private var fontFamilyPopup: NSPopUpButton!
     private var fontSizeField: NSTextField!
     private var fontSizeStepper: NSStepper!
@@ -121,9 +119,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func buildGeneralTab() {
         let stack = makeStack()
 
-        shellField = addField(to: stack, label: "Shell:", value: cfg("command"),
-                              placeholder: "Default ($SHELL)")
-        scrollbackField = addField(to: stack, label: "Scrollback:", value: cfg("scrollback-limit", default: "10000"))
         windowWidthField = addField(to: stack, label: "Window Width (cols):", value: cfg("window-width", default: "120"))
         windowHeightField = addField(to: stack, label: "Window Height (rows):", value: cfg("window-height", default: "36"))
 
@@ -217,12 +212,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         cursorRow.addArrangedSubview(cursorBlinkCheck)
         stack.addArrangedSubview(cursorRow)
 
-        let features = cfg("shell-integration-features")
-        cursorLockCheck = NSButton(checkboxWithTitle: "Lock cursor style (prevent shell override)",
-                                    target: nil, action: nil)
-        cursorLockCheck.state = features.contains("no-cursor") ? .on : .off
-        stack.addArrangedSubview(cursorLockCheck)
-
         // ── Padding ──
         addSectionHeader(to: stack, title: "PADDING")
 
@@ -305,9 +294,9 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     private func installedMonospaceFonts() -> [String] {
+        if let cached = Self.cachedMonospaceFonts { return cached }
         let fm = NSFontManager.shared
-        guard let allFonts = fm.availableFontFamilies as [String]? else { return [] }
-        return allFonts.filter { family in
+        let result = fm.availableFontFamilies.filter { family in
             guard let members = fm.availableMembers(ofFontFamily: family),
                   let first = members.first,
                   let fontName = first[0] as? String,
@@ -318,6 +307,8 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
                 || family.localizedCaseInsensitiveContains("console")
                 || family.localizedCaseInsensitiveContains("terminal")
         }.sorted()
+        Self.cachedMonospaceFonts = result
+        return result
     }
 
     private func updateFontPreview() {
@@ -354,9 +345,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
         switch currentTab {
         case .general:
-            let shell = shellField.stringValue.trimmingCharacters(in: .whitespaces)
-            if !shell.isEmpty { updates["command"] = shell }
-            updates["scrollback-limit"] = scrollbackField.stringValue
             updates["window-width"] = windowWidthField.stringValue
             updates["window-height"] = windowHeightField.stringValue
 
@@ -375,7 +363,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
             updates["cursor-style"] = cursorPopup.titleOfSelectedItem ?? "block"
             updates["cursor-style-blink"] = cursorBlinkCheck.state == .on ? "true" : "false"
-            updates["shell-integration-features"] = cursorLockCheck.state == .on ? "no-cursor" : "cursor"
 
             updates["window-padding-x"] = paddingXField.stringValue
             updates["window-padding-y"] = paddingYField.stringValue
@@ -522,7 +509,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         guard let window else { return }
         containerView.layoutSubtreeIfNeeded()
         guard let stack = containerView.subviews.first else { return }
-        let idealHeight = max(stack.fittingSize.height, 280)
+        let idealHeight = stack.fittingSize.height
         let contentRect = NSRect(x: 0, y: 0, width: 480, height: idealHeight)
         let frameRect = window.frameRect(forContentRect: contentRect)
         var newFrame = window.frame

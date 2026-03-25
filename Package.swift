@@ -21,6 +21,8 @@ let package = Package(
             path: "Sources/Spectra",
             resources: [
                 .copy("Resources/AppIcon.icns"),
+                .copy("Resources/terminfo"),
+                .copy("Resources/ghostty"),
             ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
