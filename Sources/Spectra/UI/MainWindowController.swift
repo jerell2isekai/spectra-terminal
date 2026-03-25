@@ -44,7 +44,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
         // Restore sidebar state from last session
         let sidebarWasOpen = UserDefaults.standard.bool(forKey: "sidebarOpen")
-        workspaceVC.setSidebarCollapsed(!sidebarWasOpen, animated: false)
+        if sidebarWasOpen {
+            workspaceVC.setSidebarCollapsed(false, animated: false)
+            // Expand initial window width to include sidebar (outset behavior)
+            var frame = window.frame
+            frame.size.width += workspaceVC.sidebarWidth
+            window.setFrame(frame, display: false)
+            window.center()
+        }
 
         // Create initial surface after view is in hierarchy
         if let app = bridge.app {
@@ -106,16 +113,49 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         !workspaceVC.isSidebarCollapsed
     }
 
-    /// Set sidebar open/closed state.
+    /// Set sidebar open/closed state with outset window frame adjustment.
     func setSidebarOpen(_ open: Bool, animated: Bool = true) {
+        guard let window else {
+            workspaceVC.setSidebarCollapsed(!open, animated: animated)
+            return
+        }
+
+        let isCurrentlyOpen = isSidebarOpen
+        guard open != isCurrentlyOpen else { return }
+
+        let sidebarW = workspaceVC.sidebarWidth
+        let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+
+        var newFrame = window.frame
+        if open {
+            newFrame.size.width += sidebarW
+            newFrame.origin.x -= sidebarW
+            if newFrame.origin.x < screenFrame.origin.x {
+                newFrame.origin.x = screenFrame.origin.x
+            }
+            if newFrame.maxX > screenFrame.maxX {
+                newFrame.size.width = screenFrame.maxX - newFrame.origin.x
+            }
+        } else {
+            newFrame.size.width -= sidebarW
+            newFrame.origin.x += sidebarW
+        }
+
+        if animated {
+            window.setFrame(newFrame, display: true, animate: true)
+        } else {
+            window.setFrame(newFrame, display: true)
+        }
         workspaceVC.setSidebarCollapsed(!open, animated: animated)
     }
 
     // MARK: - Sidebar Actions
 
     @objc func toggleSidebarAction(_ sender: Any?) {
-        workspaceVC.toggleSidebar(sender)
-        // Persist sidebar state after toggle animation
+        let willOpen = !isSidebarOpen
+        setSidebarOpen(willOpen)
+
+        // Persist sidebar state after animation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self else { return }
             UserDefaults.standard.set(self.isSidebarOpen, forKey: "sidebarOpen")
