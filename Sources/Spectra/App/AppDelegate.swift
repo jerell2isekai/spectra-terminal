@@ -282,54 +282,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.orderFrontStandardAboutPanel(nil)
             return
         }
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 24, left: 32, bottom: 24, right: 32)
-
-        // App icon
-        let iconView = NSImageView()
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
-           let icon = NSImage(contentsOf: iconURL) {
-            iconView.image = icon
-        } else {
-            iconView.image = NSApp.applicationIconImage
-        }
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.widthAnchor.constraint(equalToConstant: 96).isActive = true
-        iconView.heightAnchor.constraint(equalToConstant: 96).isActive = true
-        stack.addArrangedSubview(iconView)
-
-        // App name
-        let nameLabel = NSTextField(labelWithString: "Spectra")
-        nameLabel.font = .systemFont(ofSize: 22, weight: .bold)
-        nameLabel.textColor = .labelColor
-        nameLabel.alignment = .center
-        stack.addArrangedSubview(nameLabel)
-
-        // Version
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
-        let versionText = build.isEmpty ? "Version \(version)" : "Version \(version) (\(build))"
-        let versionLabel = NSTextField(labelWithString: versionText)
-        versionLabel.font = .systemFont(ofSize: 12)
-        versionLabel.textColor = .secondaryLabelColor
-        versionLabel.alignment = .center
-        stack.addArrangedSubview(versionLabel)
-
-        // Description
-        stack.setCustomSpacing(16, after: versionLabel)
-        let descLabel = NSTextField(labelWithString: "A GPU-accelerated terminal emulator\npowered by libghostty")
-        descLabel.font = .systemFont(ofSize: 12)
-        descLabel.textColor = .tertiaryLabelColor
-        descLabel.alignment = .center
-        descLabel.maximumNumberOfLines = 2
-        stack.addArrangedSubview(descLabel)
-
-        wc.showOverlay(title: "About", content: stack, size: .small)
+        wc.showOverlay(title: "About", content: AboutContentView(), size: .small)
     }
 
     @objc func openConfigFile(_ sender: Any?) {
@@ -388,24 +341,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showFilePreviewOverlay(url: URL, in wc: MainWindowController) {
-        let (scrollView, textView) = makePreviewScrollView()
-        let overlay = wc.showOverlay(title: url.lastPathComponent, content: scrollView, size: .large)
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let text: String
-            if let t = try? String(contentsOf: url, encoding: .utf8) {
-                text = t
-            } else if let data = try? Data(contentsOf: url) {
-                text = "Binary file (\(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)))"
-            } else {
-                text = "Unable to read file"
-            }
-            let attributed = Self.attributedFileContent(text)
-            DispatchQueue.main.async {
-                guard overlay.superview != nil else { return }
-                textView.textStorage?.setAttributedString(attributed)
-                textView.scrollToBeginningOfDocument(nil)
-            }
+        let preview = PreviewContentView(url: url)
+        let overlay = wc.showOverlay(title: url.lastPathComponent, content: preview, size: .large)
+        if let toolbar = preview.headerToolbar {
+            overlay.setHeaderToolbar(toolbar)
         }
     }
 
@@ -454,27 +393,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         return (scrollView, textView)
-    }
-
-    private static func attributedFileContent(_ text: String) -> NSAttributedString {
-        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        let result = NSMutableAttributedString()
-        let lines = text.components(separatedBy: "\n")
-        for (i, line) in lines.enumerated() {
-            let lineNum = String(format: "%4d  ", i + 1)
-            result.append(NSAttributedString(string: lineNum, attributes: [
-                .font: font,
-                .foregroundColor: NSColor.tertiaryLabelColor,
-            ]))
-            result.append(NSAttributedString(string: line, attributes: [
-                .font: font,
-                .foregroundColor: NSColor.labelColor,
-            ]))
-            if i < lines.count - 1 {
-                result.append(NSAttributedString(string: "\n"))
-            }
-        }
-        return result
     }
 
     private static func attributedDiffContent(_ diff: String) -> NSAttributedString {
