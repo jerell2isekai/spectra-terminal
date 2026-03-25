@@ -174,7 +174,7 @@ class TerminalSurface: NSView, NSTextInputClient {
 
     override func keyUp(with event: NSEvent) {
         guard let surface else { return }
-        var keyEvent = event.ghosttyKeyEvent(GHOSTTY_ACTION_RELEASE)
+        let keyEvent = event.ghosttyKeyEvent(GHOSTTY_ACTION_RELEASE)
         _ = ghostty_surface_key(surface, keyEvent)
     }
 

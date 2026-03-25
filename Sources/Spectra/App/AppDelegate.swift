@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAppIcon()
         setupMainMenu()
+        PreviewContentView.precompileContentRules()
 
         bridge.onNewTab = { [weak self] in
             self?.newTab(nil)

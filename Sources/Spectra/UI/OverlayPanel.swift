@@ -22,10 +22,20 @@ class OverlayPanel: NSView {
     private let contentContainer = NSView()
 
     private var panelWidthConstraint: NSLayoutConstraint?
+    private var panelHeightConstraint: NSLayoutConstraint?
     private var panelCenterYConstraint: NSLayoutConstraint?
 
     private var eventMonitor: Any?
     private let panelSize: Size
+
+    // Resize state (large mode only)
+    private enum ResizeEdge { case none, left, right, top, bottom, topLeft, topRight, bottomLeft, bottomRight }
+    private var activeResize: ResizeEdge = .none
+    private var resizeTrackingArea: NSTrackingArea?
+    private static let resizeMargin: CGFloat = 8
+    private static let cornerMargin: CGFloat = 20
+    private static let minPanelWidth: CGFloat = 400
+    private static let minPanelHeight: CGFloat = 300
 
     /// Internal cleanup callback (set by WorkspaceViewController).
     var internalDismissHandler: (() -> Void)?
@@ -125,10 +135,12 @@ class OverlayPanel: NSView {
         // Size constraints based on mode
         switch panelSize {
         case .large:
-            NSLayoutConstraint.activate([
-                panelView.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.85),
-                panelView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.9),
-            ])
+            // Explicit constraints — updated in show() with saved/default values, resizable via drag
+            let w = panelView.widthAnchor.constraint(equalToConstant: 100)
+            let h = panelView.heightAnchor.constraint(equalToConstant: 100)
+            panelWidthConstraint = w
+            panelHeightConstraint = h
+            NSLayoutConstraint.activate([w, h])
         case .medium:
             let w = panelView.widthAnchor.constraint(equalToConstant: 520)
             panelWidthConstraint = w
@@ -219,6 +231,20 @@ class OverlayPanel: NSView {
             trailingAnchor.constraint(equalTo: parentView.trailingAnchor),
         ])
 
+        // Set large panel size from UserDefaults or default proportions
+        if panelSize == .large {
+            let parentW = parentView.bounds.width
+            let parentH = parentView.bounds.height
+            let savedW = CGFloat(UserDefaults.standard.double(forKey: "overlayPanelWidth"))
+            let savedH = CGFloat(UserDefaults.standard.double(forKey: "overlayPanelHeight"))
+            let maxW = parentW - 40
+            let maxH = parentH - 40
+            panelWidthConstraint?.constant = savedW >= Self.minPanelWidth
+                ? Swift.min(savedW, maxW) : parentW * 0.85
+            panelHeightConstraint?.constant = savedH >= Self.minPanelHeight
+                ? Swift.min(savedH, maxH) : parentH * 0.9
+        }
+
         // Initial state for animation
         alphaValue = 0
         panelView.alphaValue = 0
@@ -237,6 +263,7 @@ class OverlayPanel: NSView {
         }
 
         installKeyMonitor()
+        if panelSize == .large { installResizeTracking() }
     }
 
     func dismiss() {
@@ -279,6 +306,182 @@ class OverlayPanel: NSView {
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
+        }
+    }
+
+    // MARK: - Resize (large mode)
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Intercept mouse events near panel edges for resize — prevents subviews from absorbing them
+        if panelSize == .large && detectEdge(at: point) != .none {
+            return self
+        }
+        return super.hitTest(point)
+    }
+
+    private func installResizeTracking() {
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self, userInfo: nil
+        )
+        addTrackingArea(area)
+        resizeTrackingArea = area
+    }
+
+    private func detectEdge(at point: NSPoint) -> ResizeEdge {
+        guard panelSize == .large else { return .none }
+        let f = panelView.frame
+        let m = Self.resizeMargin
+        let cm = Self.cornerMargin  // larger zone for corners
+
+        // Distance from each edge (negative = inside, positive = outside)
+        let dL = point.x - f.minX   // positive when right of left edge
+        let dR = f.maxX - point.x   // positive when left of right edge
+        let dB = point.y - f.minY   // positive when above bottom edge
+        let dT = f.maxY - point.y   // positive when below top edge
+
+        let nearL = abs(dL) < m
+        let nearR = abs(dR) < m
+        let nearB = abs(dB) < m
+        let nearT = abs(dT) < m
+
+        // Corner zones: larger hit area (cornerMargin × cornerMargin from each corner)
+        let inCornerL = dL > -m && dL < cm
+        let inCornerR = dR > -m && dR < cm
+        let inCornerB = dB > -m && dB < cm
+        let inCornerT = dT > -m && dT < cm
+
+        // Corners first (larger hit zone)
+        if inCornerT && inCornerL { return .topLeft }
+        if inCornerT && inCornerR { return .topRight }
+        if inCornerB && inCornerL { return .bottomLeft }
+        if inCornerB && inCornerR { return .bottomRight }
+
+        // Edges (within resizeMargin of each edge, and within panel Y/X range)
+        let inPanelX = point.x > f.minX + cm && point.x < f.maxX - cm
+        let inPanelY = point.y > f.minY + cm && point.y < f.maxY - cm
+        if nearL && inPanelY { return .left }
+        if nearR && inPanelY { return .right }
+        if nearT && inPanelX { return .top }
+        if nearB && inPanelX { return .bottom }
+        return .none
+    }
+
+    private func cursor(for edge: ResizeEdge) -> NSCursor {
+        switch edge {
+        case .left, .right: return .resizeLeftRight
+        case .top, .bottom: return .resizeUpDown
+        case .topLeft, .bottomRight: return Self.resizeNWSE
+        case .topRight, .bottomLeft: return Self.resizeNESW
+        case .none: return .arrow
+        }
+    }
+
+    // Diagonal resize cursors loaded from the HIServices system cursor directory.
+    // Same approach used by SDL and Skim — stable since macOS 10.6.
+    private static let resizeNWSE: NSCursor = loadSystemCursor("resizenorthwestsoutheast") ?? .crosshair
+    private static let resizeNESW: NSCursor = loadSystemCursor("resizenortheastsouthwest") ?? .crosshair
+
+    private static func loadSystemCursor(_ name: String) -> NSCursor? {
+        let base = "/System/Library/Frameworks/ApplicationServices.framework"
+            + "/Versions/A/Frameworks/HIServices.framework"
+            + "/Versions/A/Resources/cursors"
+        let dir = "\(base)/\(name)"
+        guard let image = NSImage(contentsOfFile: "\(dir)/cursor.pdf") else { return nil }
+        var hotSpot = NSPoint(x: 8, y: 8)
+        if let info = NSDictionary(contentsOfFile: "\(dir)/info.plist") {
+            hotSpot = NSPoint(x: info["hotx"] as? Double ?? 8, y: info["hoty"] as? Double ?? 8)
+        }
+        return NSCursor(image: image, hotSpot: hotSpot)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard panelSize == .large else { return }
+        let f = panelView.frame
+        let m = Self.resizeMargin
+        let cm = Self.cornerMargin
+
+        // Corners (larger hit zones)
+        let nwse = Self.resizeNWSE
+        let nesw = Self.resizeNESW
+        addCursorRect(NSRect(x: f.minX - m, y: f.maxY - cm, width: cm + m, height: cm + m), cursor: nwse)  // topLeft
+        addCursorRect(NSRect(x: f.maxX - cm, y: f.maxY - cm, width: cm + m, height: cm + m), cursor: nesw)  // topRight
+        addCursorRect(NSRect(x: f.minX - m, y: f.minY - m, width: cm + m, height: cm + m), cursor: nesw)    // bottomLeft
+        addCursorRect(NSRect(x: f.maxX - cm, y: f.minY - m, width: cm + m, height: cm + m), cursor: nwse)    // bottomRight
+
+        // Edges (between corners)
+        addCursorRect(NSRect(x: f.minX - m, y: f.minY + cm, width: m * 2, height: f.height - cm * 2), cursor: .resizeLeftRight)   // left
+        addCursorRect(NSRect(x: f.maxX - m, y: f.minY + cm, width: m * 2, height: f.height - cm * 2), cursor: .resizeLeftRight)   // right
+        addCursorRect(NSRect(x: f.minX + cm, y: f.maxY - m, width: f.width - cm * 2, height: m * 2), cursor: .resizeUpDown)       // top
+        addCursorRect(NSRect(x: f.minX + cm, y: f.minY - m, width: f.width - cm * 2, height: m * 2), cursor: .resizeUpDown)       // bottom
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard panelSize == .large else { super.mouseDown(with: event); return }
+        let point = convert(event.locationInWindow, from: nil)
+        let edge = detectEdge(at: point)
+        if edge != .none {
+            activeResize = edge
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard panelSize == .large, activeResize != .none,
+              let wc = panelWidthConstraint, let hc = panelHeightConstraint else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        let dx = event.deltaX
+        let dy = event.deltaY
+        let maxW = bounds.width - 40
+        let maxH = bounds.height - 40
+
+        // Since panel is centered, edge drag changes size symmetrically (2x delta)
+        var newW = wc.constant
+        var newH = hc.constant
+
+        // NSEvent.deltaY: positive = mouse moved down (screen coords)
+        switch activeResize {
+        case .left:       newW -= dx * 2
+        case .right:      newW += dx * 2
+        case .top:        newH -= dy * 2  // drag top up (dy<0): height increases
+        case .bottom:     newH += dy * 2  // drag bottom down (dy>0): height increases
+        case .topLeft:    newW -= dx * 2; newH -= dy * 2
+        case .topRight:   newW += dx * 2; newH -= dy * 2
+        case .bottomLeft: newW -= dx * 2; newH += dy * 2
+        case .bottomRight: newW += dx * 2; newH += dy * 2
+        case .none: return
+        }
+
+        // Clamp
+        newW = Swift.max(Self.minPanelWidth, Swift.min(newW, maxW))
+        newH = Swift.max(Self.minPanelHeight, Swift.min(newH, maxH))
+
+        wc.constant = newW
+        hc.constant = newH
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if panelSize == .large && activeResize != .none {
+            // Persist size
+            if let wc = panelWidthConstraint, let hc = panelHeightConstraint {
+                UserDefaults.standard.set(Double(wc.constant), forKey: "overlayPanelWidth")
+                UserDefaults.standard.set(Double(hc.constant), forKey: "overlayPanelHeight")
+            }
+            activeResize = .none
+            NSCursor.arrow.set()
+        } else {
+            super.mouseUp(with: event)
         }
     }
 
