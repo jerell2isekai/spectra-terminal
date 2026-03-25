@@ -6,21 +6,30 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var currentTab: Tab = .general
     private let containerView = NSView()
 
-    private var fontFamilyField: NSTextField!
-    private var fontSizeField: NSTextField!
-    private var fontSizeStepper: NSStepper!
-    private var themeField: NSTextField!
-    private var opacitySlider: NSSlider!
-    private var opacityLabel: NSTextField!
-    private var cursorPopup: NSPopUpButton!
-    private var cursorBlinkCheck: NSButton!
-    private var paddingXField: NSTextField!
-    private var paddingYField: NSTextField!
-    private var appearancePopup: NSPopUpButton!
+    // General tab
     private var shellField: NSTextField!
     private var scrollbackField: NSTextField!
     private var windowWidthField: NSTextField!
     private var windowHeightField: NSTextField!
+
+    // Appearance tab
+    private var appearancePopup: NSPopUpButton!
+    private var themeField: NSTextField!
+    private var opacitySlider: NSSlider!
+    private var opacityLabel: NSTextField!
+    private var blurPopup: NSPopUpButton!
+    private var cursorPopup: NSPopUpButton!
+    private var cursorBlinkCheck: NSButton!
+    private var cursorLockCheck: NSButton!
+    private var paddingXField: NSTextField!
+    private var paddingYField: NSTextField!
+    private var paddingBalancePopup: NSPopUpButton!
+
+    // Font tab
+    private var fontFamilyPopup: NSPopUpButton!
+    private var fontSizeField: NSTextField!
+    private var fontSizeStepper: NSStepper!
+    private var fontPreview: NSTextField!
 
     enum Tab: String, CaseIterable {
         case general = "General"
@@ -98,6 +107,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         case .appearance: buildAppearanceTab()
         case .font:       buildFontTab()
         }
+        resizeWindowToFit()
     }
 
     // MARK: - Read config helpers
@@ -119,7 +129,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
         stack.addArrangedSubview(NSView()) // separator
 
-        // Import buttons
         let importRow = NSStackView()
         importRow.orientation = .horizontal; importRow.spacing = 8
         let importGhosttyBtn = NSButton(title: "Import Ghostty Config", target: self,
@@ -132,7 +141,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         importRow.addArrangedSubview(importFileBtn)
         stack.addArrangedSubview(importRow)
 
-        addSpacer(to: stack)
         addApplyButton(to: stack)
         containerView.addSubview(stack)
         pinStack(stack)
@@ -143,47 +151,62 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func buildAppearanceTab() {
         let stack = makeStack()
 
-        // Appearance Mode (Light / Dark / System)
-        let modeRow = NSStackView()
-        modeRow.orientation = .horizontal; modeRow.spacing = 8
-        let modeLbl = NSTextField(labelWithString: "Appearance:")
-        modeLbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        modeLbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
-        appearancePopup = NSPopUpButton()
-        appearancePopup.addItems(withTitles: ["System", "Light", "Dark"])
-        let currentMode = cfg("spectra-appearance", default: "system")
-        switch currentMode {
-        case "light": appearancePopup.selectItem(withTitle: "Light")
-        case "dark":  appearancePopup.selectItem(withTitle: "Dark")
-        default:      appearancePopup.selectItem(withTitle: "System")
-        }
-        modeRow.addArrangedSubview(modeLbl)
-        modeRow.addArrangedSubview(appearancePopup)
-        stack.addArrangedSubview(modeRow)
+        // ── Theme ──
+        addSectionHeader(to: stack, title: "THEME")
+
+        appearancePopup = addPopupRow(to: stack, label: "Appearance:",
+                                       items: ["System", "Light", "Dark"],
+                                       selected: {
+            switch cfg("spectra-appearance", default: "system") {
+            case "light": return "Light"
+            case "dark": return "Dark"
+            default: return "System"
+            }
+        }())
 
         themeField = addField(to: stack, label: "Theme:", value: cfg("theme"),
                               placeholder: "e.g. catppuccin-mocha")
 
-        // Opacity
+        // ── Background ──
+        addSectionHeader(to: stack, title: "BACKGROUND")
+
         let opacity = Double(cfg("background-opacity", default: "1")) ?? 1.0
         let opacityRow = NSStackView()
         opacityRow.orientation = .horizontal; opacityRow.spacing = 8
-        let lbl = NSTextField(labelWithString: "Background Opacity:")
-        lbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        opacitySlider = NSSlider(value: opacity, minValue: 0.1, maxValue: 1.0,
+        let oLbl = NSTextField(labelWithString: "Opacity:")
+        oLbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        oLbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        opacitySlider = NSSlider(value: opacity, minValue: 0.0, maxValue: 1.0,
                                  target: self, action: #selector(opacityChanged(_:)))
         opacityLabel = NSTextField(labelWithString: String(format: "%.0f%%", opacity * 100))
         opacityLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        opacityRow.addArrangedSubview(lbl)
+        opacityRow.addArrangedSubview(oLbl)
         opacityRow.addArrangedSubview(opacitySlider)
         opacityRow.addArrangedSubview(opacityLabel)
         stack.addArrangedSubview(opacityRow)
 
-        // Cursor
+        let blurValue = cfg("background-blur", default: "false")
+        let blurSelected: String = {
+            switch blurValue {
+            case "true": return "On"
+            case "macos-glass-regular": return "Glass Regular"
+            case "macos-glass-clear": return "Glass Clear"
+            default: return "Off"
+            }
+        }()
+        blurPopup = addPopupRow(to: stack, label: "Blur:",
+                                 items: ["Off", "On"],
+                                 selected: blurSelected == "Off" ? "Off" : "On")
+        addNote(to: stack, text: "Only visible when opacity is below 100%")
+
+        // ── Cursor ──
+        addSectionHeader(to: stack, title: "CURSOR")
+
         let cursorRow = NSStackView()
         cursorRow.orientation = .horizontal; cursorRow.spacing = 8
         let cLbl = NSTextField(labelWithString: "Cursor Style:")
         cLbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        cLbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
         cursorPopup = NSPopUpButton()
         cursorPopup.addItems(withTitles: ["block", "bar", "underline"])
         cursorPopup.selectItem(withTitle: cfg("cursor-style", default: "block"))
@@ -194,10 +217,31 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         cursorRow.addArrangedSubview(cursorBlinkCheck)
         stack.addArrangedSubview(cursorRow)
 
-        paddingXField = addField(to: stack, label: "Padding X:", value: cfg("window-padding-x", default: "0"))
-        paddingYField = addField(to: stack, label: "Padding Y:", value: cfg("window-padding-y", default: "0"))
+        let features = cfg("shell-integration-features")
+        cursorLockCheck = NSButton(checkboxWithTitle: "Lock cursor style (prevent shell override)",
+                                    target: nil, action: nil)
+        cursorLockCheck.state = features.contains("no-cursor") ? .on : .off
+        stack.addArrangedSubview(cursorLockCheck)
 
-        addSpacer(to: stack)
+        // ── Padding ──
+        addSectionHeader(to: stack, title: "PADDING")
+
+        paddingXField = addField(to: stack, label: "Padding X:", value: cfg("window-padding-x", default: "2"))
+        paddingYField = addField(to: stack, label: "Padding Y:", value: cfg("window-padding-y", default: "2"))
+        addNote(to: stack, text: "Takes effect on new terminals (new tab or split)")
+
+        let balanceValue = cfg("window-padding-balance", default: "false")
+        let balanceSelected: String = {
+            switch balanceValue {
+            case "true": return "On"
+            case "equal": return "Equal"
+            default: return "Off"
+            }
+        }()
+        paddingBalancePopup = addPopupRow(to: stack, label: "Balance:",
+                                           items: ["Off", "On", "Equal"],
+                                           selected: balanceSelected)
+
         addApplyButton(to: stack)
         containerView.addSubview(stack)
         pinStack(stack)
@@ -208,9 +252,30 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func buildFontTab() {
         let stack = makeStack()
 
-        fontFamilyField = addField(to: stack, label: "Font Family:", value: cfg("font-family"),
-                                   placeholder: "e.g. JetBrains Mono")
+        // Font family popup with installed monospace fonts
+        let familyRow = NSStackView()
+        familyRow.orientation = .horizontal; familyRow.spacing = 8
+        let fLbl = NSTextField(labelWithString: "Font Family:")
+        fLbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        fLbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        fontFamilyPopup = NSPopUpButton()
+        fontFamilyPopup.target = self
+        fontFamilyPopup.action = #selector(fontFamilyChanged(_:))
 
+        let monoFonts = installedMonospaceFonts()
+        fontFamilyPopup.addItems(withTitles: monoFonts)
+
+        let currentFamily = cfg("font-family")
+        if !currentFamily.isEmpty, let match = monoFonts.first(where: {
+            $0.caseInsensitiveCompare(currentFamily) == .orderedSame
+        }) {
+            fontFamilyPopup.selectItem(withTitle: match)
+        }
+        familyRow.addArrangedSubview(fLbl)
+        familyRow.addArrangedSubview(fontFamilyPopup)
+        stack.addArrangedSubview(familyRow)
+
+        // Font size
         let sizeRow = NSStackView()
         sizeRow.orientation = .horizontal; sizeRow.spacing = 8
         let sLbl = NSTextField(labelWithString: "Font Size:")
@@ -229,20 +294,44 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         stack.addArrangedSubview(sizeRow)
 
         // Preview
-        let family = cfg("font-family")
-        let previewFont = family.isEmpty
-            ? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
-            : NSFont(name: family, size: CGFloat(size))
-                ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
-        let preview = NSTextField(labelWithString: "AaBbCcDdEeFf 0123456789 ~!@#$%")
-        preview.font = previewFont
-        preview.alignment = .center
-        stack.addArrangedSubview(preview)
+        fontPreview = NSTextField(labelWithString: "AaBbCcDdEeFf 0123456789 ~!@#$%")
+        fontPreview.alignment = .center
+        updateFontPreview()
+        stack.addArrangedSubview(fontPreview)
 
-        addSpacer(to: stack)
         addApplyButton(to: stack)
         containerView.addSubview(stack)
         pinStack(stack)
+    }
+
+    private func installedMonospaceFonts() -> [String] {
+        let fm = NSFontManager.shared
+        guard let allFonts = fm.availableFontFamilies as [String]? else { return [] }
+        return allFonts.filter { family in
+            guard let members = fm.availableMembers(ofFontFamily: family),
+                  let first = members.first,
+                  let fontName = first[0] as? String,
+                  let font = NSFont(name: fontName, size: 13) else { return false }
+            return font.isFixedPitch
+                || family.localizedCaseInsensitiveContains("mono")
+                || family.localizedCaseInsensitiveContains("code")
+                || family.localizedCaseInsensitiveContains("console")
+                || family.localizedCaseInsensitiveContains("terminal")
+        }.sorted()
+    }
+
+    private func updateFontPreview() {
+        guard let preview = fontPreview else { return }
+        let family = fontFamilyPopup?.titleOfSelectedItem ?? ""
+        let size = CGFloat(fontSizeStepper?.integerValue ?? 13)
+        let font: NSFont = {
+            if family.isEmpty {
+                return .monospacedSystemFont(ofSize: size, weight: .regular)
+            }
+            return NSFont(name: family, size: size)
+                ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        }()
+        preview.font = font
     }
 
     // MARK: - Actions
@@ -253,6 +342,11 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     @objc private func sizeStepperChanged(_ sender: NSStepper) {
         fontSizeField.stringValue = "\(sender.integerValue)"
+        updateFontPreview()
+    }
+
+    @objc private func fontFamilyChanged(_ sender: NSPopUpButton) {
+        updateFontPreview()
     }
 
     @objc private func applySettings(_ sender: Any?) {
@@ -275,15 +369,26 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             }
             let theme = themeField.stringValue.trimmingCharacters(in: .whitespaces)
             if !theme.isEmpty { updates["theme"] = theme }
+
             updates["background-opacity"] = String(format: "%.2f", opacitySlider.doubleValue)
+            updates["background-blur"] = blurPopup.titleOfSelectedItem == "On" ? "true" : "false"
+
             updates["cursor-style"] = cursorPopup.titleOfSelectedItem ?? "block"
             updates["cursor-style-blink"] = cursorBlinkCheck.state == .on ? "true" : "false"
+            updates["shell-integration-features"] = cursorLockCheck.state == .on ? "no-cursor" : "cursor"
+
             updates["window-padding-x"] = paddingXField.stringValue
             updates["window-padding-y"] = paddingYField.stringValue
+            switch paddingBalancePopup.titleOfSelectedItem ?? "Off" {
+            case "On": updates["window-padding-balance"] = "true"
+            case "Equal": updates["window-padding-balance"] = "equal"
+            default: updates["window-padding-balance"] = "false"
+            }
 
         case .font:
-            let family = fontFamilyField.stringValue.trimmingCharacters(in: .whitespaces)
-            if !family.isEmpty { updates["font-family"] = family }
+            if let family = fontFamilyPopup.titleOfSelectedItem, !family.isEmpty {
+                updates["font-family"] = family
+            }
             updates["font-size"] = fontSizeField.stringValue
         }
 
@@ -364,10 +469,41 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         return field
     }
 
-    private func addSpacer(to stack: NSStackView) {
-        let v = NSView()
-        v.setContentHuggingPriority(.defaultLow, for: .vertical)
-        stack.addArrangedSubview(v)
+    @discardableResult
+    private func addPopupRow(to stack: NSStackView, label: String, items: [String], selected: String) -> NSPopUpButton {
+        let row = NSStackView()
+        row.orientation = .horizontal; row.spacing = 8
+        let lbl = NSTextField(labelWithString: label)
+        lbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        lbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        let popup = NSPopUpButton()
+        popup.addItems(withTitles: items)
+        popup.selectItem(withTitle: selected)
+        row.addArrangedSubview(lbl)
+        row.addArrangedSubview(popup)
+        stack.addArrangedSubview(row)
+        return popup
+    }
+
+    private func addNote(to stack: NSStackView, text: String) {
+        if let last = stack.arrangedSubviews.last {
+            stack.setCustomSpacing(2, after: last)
+        }
+        let note = NSTextField(labelWithString: text)
+        note.font = .systemFont(ofSize: 10)
+        note.textColor = .tertiaryLabelColor
+        stack.addArrangedSubview(note)
+    }
+
+    private func addSectionHeader(to stack: NSStackView, title: String) {
+        if let last = stack.arrangedSubviews.last {
+            stack.setCustomSpacing(20, after: last)
+        }
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .tertiaryLabelColor
+        stack.addArrangedSubview(label)
+        stack.setCustomSpacing(6, after: label)
     }
 
     private func addApplyButton(to stack: NSStackView) {
@@ -380,5 +516,18 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         row.addArrangedSubview(spacer)
         row.addArrangedSubview(btn)
         stack.addArrangedSubview(row)
+    }
+
+    private func resizeWindowToFit() {
+        guard let window else { return }
+        containerView.layoutSubtreeIfNeeded()
+        guard let stack = containerView.subviews.first else { return }
+        let idealHeight = max(stack.fittingSize.height, 280)
+        let contentRect = NSRect(x: 0, y: 0, width: 480, height: idealHeight)
+        let frameRect = window.frameRect(forContentRect: contentRect)
+        var newFrame = window.frame
+        newFrame.origin.y += newFrame.size.height - frameRect.size.height
+        newFrame.size.height = frameRect.size.height
+        window.setFrame(newFrame, display: true, animate: window.isVisible)
     }
 }

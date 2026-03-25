@@ -17,28 +17,30 @@ class ConfigManager {
 
     // MARK: - Ghostty Config
 
-    /// Create a ghostty_config_t by directly loading Spectra's config file.
-    /// No translation needed — the file IS in ghostty format.
+    /// Create a ghostty_config_t by loading Spectra's config file.
+    /// Spectra-only keys (prefixed with `spectra-`) are stripped before loading
+    /// since ghostty's parser doesn't recognize them.
     func createGhosttyConfig() -> ghostty_config_t? {
         guard let cfg = ghostty_config_new() else { return nil }
 
         let path = SpectraConfig.configFile.path
-        path.withCString { cPath in
-            ghostty_config_load_file(cfg, cPath)
+        if let content = try? String(contentsOfFile: path, encoding: .utf8) {
+            // Strip Spectra-only keys that ghostty doesn't recognize
+            let filtered = content.components(separatedBy: .newlines)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("spectra-") }
+                .joined(separator: "\n")
+            let tmpURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("spectra-ghostty-\(ProcessInfo.processInfo.processIdentifier).conf")
+            try? filtered.write(to: tmpURL, atomically: true, encoding: .utf8)
+            tmpURL.path.withCString { cPath in
+                ghostty_config_load_file(cfg, cPath)
+            }
+            try? FileManager.default.removeItem(at: tmpURL)
+        } else {
+            path.withCString { cPath in
+                ghostty_config_load_file(cfg, cPath)
+            }
         }
-
-        // Re-apply cursor settings explicitly after file load, since they
-        // may appear after the theme line and some ghostty versions process
-        // theme settings as a post-pass that can override later config lines.
-        let cursorStyle = SpectraConfig.read("cursor-style", default: "block")
-        let cursorBlink = SpectraConfig.read("cursor-style-blink", default: "true")
-        let cursorOverrides = "cursor-style = \(cursorStyle)\ncursor-style-blink = \(cursorBlink)\n"
-        let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("spectra-cursor.conf")
-        try? cursorOverrides.write(to: tmpURL, atomically: true, encoding: .utf8)
-        tmpURL.path.withCString { cPath in
-            ghostty_config_load_file(cfg, cPath)
-        }
-        try? FileManager.default.removeItem(at: tmpURL)
 
         ghostty_config_finalize(cfg)
 

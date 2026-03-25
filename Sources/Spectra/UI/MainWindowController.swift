@@ -145,8 +145,16 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         let opacity = max(0.001, min(1.0, SpectraConfig.backgroundOpacity))
         if opacity < 1.0 {
             window.isOpaque = false
-            window.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.001)
+            // Use .white (not .windowBackgroundColor) to match Terminal.app transparency behavior
+            window.backgroundColor = .white.withAlphaComponent(0.001)
             window.hasShadow = true
+
+            // Apply background blur via the private CGSSetWindowBackgroundBlurRadius API.
+            // ghostty_set_window_background_blur reads background-blur and background-opacity
+            // from the app config and applies the appropriate blur radius.
+            if let app = bridge.app {
+                ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
+            }
         } else {
             window.isOpaque = true
             window.backgroundColor = .windowBackgroundColor

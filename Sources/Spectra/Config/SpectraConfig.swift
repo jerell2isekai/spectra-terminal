@@ -55,6 +55,9 @@ enum SpectraConfig {
     cursor-style-blink = true
     cursor-opacity = 1
 
+    # Shell integration
+    shell-integration-features = no-cursor
+
     # Terminal
     scrollback-limit = 10000
     # command = /bin/zsh

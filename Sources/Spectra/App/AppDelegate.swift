@@ -181,7 +181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                            action: { [weak self] in self?.previousPaneTab(nil) }))
         items.append(.init(title: "Settings", subtitle: "Cmd+,", icon: "gearshape",
                            action: { [weak self] in self?.openSettings(nil) }))
-        items.append(.init(title: "Toggle Sidebar", subtitle: "Cmd+B", icon: "sidebar.left",
+        items.append(.init(title: "Toggle Sidebar", subtitle: "Cmd+\\", icon: "sidebar.left",
                            action: { [weak self] in self?.toggleSidebar(nil) }))
         items.append(.init(title: "Reload Config", subtitle: "", icon: "arrow.clockwise",
                            action: { [weak self] in self?.reloadConfig(nil) }))
