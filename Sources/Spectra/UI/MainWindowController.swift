@@ -108,6 +108,21 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebarVC.setRootDirectory(url)
     }
 
+    // MARK: - Overlay Panel
+
+    @discardableResult
+    func showOverlay(title: String, content: NSView, size: OverlayPanel.Size = .large) -> OverlayPanel {
+        workspaceVC.showOverlay(title: title, content: content, size: size)
+    }
+
+    func dismissOverlay() {
+        workspaceVC.dismissOverlay()
+    }
+
+    var isOverlayVisible: Bool {
+        workspaceVC.isOverlayVisible
+    }
+
     /// Whether the sidebar is currently open.
     var isSidebarOpen: Bool {
         !workspaceVC.isSidebarCollapsed

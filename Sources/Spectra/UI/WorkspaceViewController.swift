@@ -11,6 +11,7 @@ class WorkspaceViewController: NSViewController {
     private var sidebarContainer: NSVisualEffectView!
     private(set) var sidebarWidthConstraint: NSLayoutConstraint!
     private var divider: DividerView!
+    private(set) var currentOverlay: OverlayPanel?
 
     /// The default sidebar width when first opened.
     static let defaultSidebarWidth: CGFloat = 220
@@ -88,6 +89,32 @@ class WorkspaceViewController: NSViewController {
         // Start collapsed
         sidebarContainer.isHidden = true
         divider.isHidden = true
+    }
+
+    // MARK: - Overlay
+
+    /// Show an overlay panel on top of the entire workspace (sidebar + terminal).
+    @discardableResult
+    func showOverlay(title: String, content: NSView, size: OverlayPanel.Size = .large) -> OverlayPanel {
+        // Dismiss any existing overlay first
+        currentOverlay?.dismiss()
+
+        let overlay = OverlayPanel(title: title, size: size)
+        overlay.setContent(content)
+        overlay.internalDismissHandler = { [weak self] in
+            self?.currentOverlay = nil
+        }
+        overlay.show(in: view)
+        currentOverlay = overlay
+        return overlay
+    }
+
+    func dismissOverlay() {
+        currentOverlay?.dismiss()
+    }
+
+    var isOverlayVisible: Bool {
+        currentOverlay != nil
     }
 
     // MARK: - Divider Drag

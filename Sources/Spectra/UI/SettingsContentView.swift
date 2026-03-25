@@ -1,10 +1,12 @@
 import AppKit
 
-/// macOS native Settings window with toolbar tabs.
-class SettingsWindowController: NSWindowController, NSToolbarDelegate {
-    private var configManager: ConfigManager
+/// Settings form content designed to be embedded inside an OverlayPanel.
+/// Replaces SettingsWindowController with an in-window overlay approach.
+class SettingsContentView: NSView {
+    private let configManager: ConfigManager
     private var currentTab: Tab = .general
-    private let containerView = NSView()
+    private let segmentedControl: NSSegmentedControl
+    private let formContainer = NSView()
 
     // General tab
     private var windowWidthField: NSTextField!
@@ -29,86 +31,75 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var fontSizeStepper: NSStepper!
     private var fontPreview: NSTextField!
 
-    enum Tab: String, CaseIterable {
-        case general = "General"
-        case appearance = "Appearance"
-        case font = "Font"
+    enum Tab: Int, CaseIterable {
+        case general = 0
+        case appearance = 1
+        case font = 2
+
+        var label: String {
+            switch self {
+            case .general: return "General"
+            case .appearance: return "Appearance"
+            case .font: return "Font"
+            }
+        }
     }
 
     init(configManager: ConfigManager) {
         self.configManager = configManager
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
+        segmentedControl = NSSegmentedControl(
+            labels: Tab.allCases.map(\.label),
+            trackingMode: .selectOne,
+            target: nil,
+            action: nil
         )
-        window.title = "Spectra Settings"
-        window.center()
-        window.isReleasedWhenClosed = false
+        super.init(frame: .zero)
 
-        super.init(window: window)
-        window.contentView = containerView
-        setupToolbar()
+        segmentedControl.target = self
+        segmentedControl.action = #selector(tabChanged(_:))
+        segmentedControl.selectedSegment = 0
+
+        setupLayout()
         showTab(.general)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    // MARK: - Toolbar
+    /// The segmented control to be placed in the overlay header.
+    var headerToolbar: NSView { segmentedControl }
 
-    private func setupToolbar() {
-        let toolbar = NSToolbar(identifier: "SettingsToolbar")
-        toolbar.delegate = self
-        toolbar.displayMode = .iconAndLabel
-        toolbar.selectedItemIdentifier = NSToolbarItem.Identifier(Tab.general.rawValue)
-        window?.toolbar = toolbar
-    }
+    // MARK: - Layout
 
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Tab.allCases.map { .init($0.rawValue) }
-    }
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Tab.allCases.map { .init($0.rawValue) }
-    }
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Tab.allCases.map { .init($0.rawValue) }
+    private func setupLayout() {
+        formContainer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(formContainer)
+        NSLayoutConstraint.activate([
+            formContainer.topAnchor.constraint(equalTo: topAnchor),
+            formContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            formContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            formContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 
-    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
-                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        let item = NSToolbarItem(itemIdentifier: id)
-        item.label = id.rawValue
-        item.target = self
-        item.action = #selector(switchTab(_:))
-        switch id.rawValue {
-        case "General":    item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        case "Appearance": item.image = NSImage(systemSymbolName: "paintbrush", accessibilityDescription: nil)
-        case "Font":       item.image = NSImage(systemSymbolName: "textformat", accessibilityDescription: nil)
-        default: break
-        }
-        return item
-    }
+    // MARK: - Tab Switching
 
-    @objc private func switchTab(_ sender: NSToolbarItem) {
-        guard let tab = Tab(rawValue: sender.itemIdentifier.rawValue) else { return }
+    @objc private func tabChanged(_ sender: NSSegmentedControl) {
+        guard let tab = Tab(rawValue: sender.selectedSegment) else { return }
         showTab(tab)
     }
 
     private func showTab(_ tab: Tab) {
         currentTab = tab
-        containerView.subviews.forEach { $0.removeFromSuperview() }
-        window?.toolbar?.selectedItemIdentifier = .init(tab.rawValue)
+        segmentedControl.selectedSegment = tab.rawValue
+        formContainer.subviews.forEach { $0.removeFromSuperview() }
         switch tab {
         case .general:    buildGeneralTab()
         case .appearance: buildAppearanceTab()
         case .font:       buildFontTab()
         }
-        resizeWindowToFit()
     }
 
-    // MARK: - Read config helpers
+    // MARK: - Config Helpers
 
     private func cfg(_ key: String, default d: String = "") -> String {
         SpectraConfig.read(key, default: d)
@@ -122,7 +113,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         windowWidthField = addField(to: stack, label: "Window Width (cols):", value: cfg("window-width", default: "120"))
         windowHeightField = addField(to: stack, label: "Window Height (rows):", value: cfg("window-height", default: "36"))
 
-        stack.addArrangedSubview(NSView()) // separator
+        stack.addArrangedSubview(NSView())
 
         let importRow = NSStackView()
         importRow.orientation = .horizontal; importRow.spacing = 8
@@ -137,7 +128,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         stack.addArrangedSubview(importRow)
 
         addApplyButton(to: stack)
-        containerView.addSubview(stack)
+        formContainer.addSubview(stack)
         pinStack(stack)
     }
 
@@ -146,7 +137,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func buildAppearanceTab() {
         let stack = makeStack()
 
-        // ── Theme ──
         addSectionHeader(to: stack, title: "THEME")
 
         appearancePopup = addPopupRow(to: stack, label: "Appearance:",
@@ -162,7 +152,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         themeField = addField(to: stack, label: "Theme:", value: cfg("theme"),
                               placeholder: "e.g. catppuccin-mocha")
 
-        // ── Background ──
         addSectionHeader(to: stack, title: "BACKGROUND")
 
         let opacity = Double(cfg("background-opacity", default: "1")) ?? 1.0
@@ -181,20 +170,12 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         stack.addArrangedSubview(opacityRow)
 
         let blurValue = cfg("background-blur", default: "false")
-        let blurSelected: String = {
-            switch blurValue {
-            case "true": return "On"
-            case "macos-glass-regular": return "Glass Regular"
-            case "macos-glass-clear": return "Glass Clear"
-            default: return "Off"
-            }
-        }()
+        let blurSelected = blurValue == "false" ? "Off" : "On"
         blurPopup = addPopupRow(to: stack, label: "Blur:",
                                  items: ["Off", "On"],
-                                 selected: blurSelected == "Off" ? "Off" : "On")
+                                 selected: blurSelected)
         addNote(to: stack, text: "Only visible when opacity is below 100%")
 
-        // ── Cursor ──
         addSectionHeader(to: stack, title: "CURSOR")
 
         let cursorRow = NSStackView()
@@ -212,7 +193,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         cursorRow.addArrangedSubview(cursorBlinkCheck)
         stack.addArrangedSubview(cursorRow)
 
-        // ── Padding ──
         addSectionHeader(to: stack, title: "PADDING")
 
         paddingXField = addField(to: stack, label: "Padding X:", value: cfg("window-padding-x", default: "2"))
@@ -232,7 +212,7 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
                                            selected: balanceSelected)
 
         addApplyButton(to: stack)
-        containerView.addSubview(stack)
+        formContainer.addSubview(stack)
         pinStack(stack)
     }
 
@@ -241,7 +221,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func buildFontTab() {
         let stack = makeStack()
 
-        // Font family popup with installed monospace fonts
         let familyRow = NSStackView()
         familyRow.orientation = .horizontal; familyRow.spacing = 8
         let fLbl = NSTextField(labelWithString: "Font Family:")
@@ -264,7 +243,6 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         familyRow.addArrangedSubview(fontFamilyPopup)
         stack.addArrangedSubview(familyRow)
 
-        // Font size
         let sizeRow = NSStackView()
         sizeRow.orientation = .horizontal; sizeRow.spacing = 8
         let sLbl = NSTextField(labelWithString: "Font Size:")
@@ -282,14 +260,13 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         sizeRow.addArrangedSubview(fontSizeStepper)
         stack.addArrangedSubview(sizeRow)
 
-        // Preview
         fontPreview = NSTextField(labelWithString: "AaBbCcDdEeFf 0123456789 ~!@#$%")
         fontPreview.alignment = .center
         updateFontPreview()
         stack.addArrangedSubview(fontPreview)
 
         addApplyButton(to: stack)
-        containerView.addSubview(stack)
+        formContainer.addSubview(stack)
         pinStack(stack)
     }
 
@@ -432,11 +409,13 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     private func pinStack(_ s: NSStackView) {
+        let bottom = s.bottomAnchor.constraint(equalTo: formContainer.bottomAnchor)
+        bottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            s.topAnchor.constraint(equalTo: containerView.topAnchor),
-            s.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            s.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            s.bottomAnchor.constraint(lessThanOrEqualTo: containerView.bottomAnchor),
+            s.topAnchor.constraint(equalTo: formContainer.topAnchor),
+            s.leadingAnchor.constraint(equalTo: formContainer.leadingAnchor),
+            s.trailingAnchor.constraint(equalTo: formContainer.trailingAnchor),
+            bottom,
         ])
     }
 
@@ -503,18 +482,5 @@ class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         row.addArrangedSubview(spacer)
         row.addArrangedSubview(btn)
         stack.addArrangedSubview(row)
-    }
-
-    private func resizeWindowToFit() {
-        guard let window else { return }
-        containerView.layoutSubtreeIfNeeded()
-        guard let stack = containerView.subviews.first else { return }
-        let idealHeight = stack.fittingSize.height
-        let contentRect = NSRect(x: 0, y: 0, width: 480, height: idealHeight)
-        let frameRect = window.frameRect(forContentRect: contentRect)
-        var newFrame = window.frame
-        newFrame.origin.y += newFrame.size.height - frameRect.size.height
-        newFrame.size.height = frameRect.size.height
-        window.setFrame(newFrame, display: true, animate: window.isVisible)
     }
 }
