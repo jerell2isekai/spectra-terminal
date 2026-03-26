@@ -320,6 +320,14 @@ class TerminalSurface: NSView, NSTextInputClient {
         menu.addItem(item("Save Layout…", #selector(contextSaveLayout(_:)), symbol: "square.and.arrow.down"))
         menu.addItem(item("Load Layout…", #selector(contextLoadLayout(_:)), symbol: "square.and.arrow.up"))
 
+        // Dynamic width: measure longest title + icon + margins
+        let font = NSFont.menuFont(ofSize: 0)
+        let maxTitle = menu.items
+            .filter { !$0.isSeparatorItem }
+            .map { ($0.title as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        menu.minimumWidth = maxTitle + 64  // icon (20) + leading/trailing padding
+
         return menu
     }
 
