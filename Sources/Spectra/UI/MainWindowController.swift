@@ -115,6 +115,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         workspaceVC.showOverlay(title: title, content: content, size: size)
     }
 
+    func showGuideSync() {
+        let content = GuideSyncContentView(currentProjectPathProvider: { [weak self] in
+            self?.sidebarRootPath
+        })
+        let overlay = showOverlay(title: "Guide Sync", content: content, size: .large)
+        overlay.setHeaderToolbar(content.headerToolbar)
+    }
+
     func dismissOverlay() {
         workspaceVC.dismissOverlay()
     }

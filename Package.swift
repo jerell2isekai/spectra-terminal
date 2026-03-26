@@ -25,6 +25,7 @@ let package = Package(
                 .copy("Resources/terminfo"),
                 .copy("Resources/ghostty"),
                 .copy("Resources/js"),
+                .copy("Resources/Guides"),
             ],
             linkerSettings: [
                 .linkedFramework("AppKit"),

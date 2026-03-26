@@ -17,6 +17,18 @@ enum SpectraConfig {
         configDir.appendingPathComponent("config")
     }
 
+    static var guideSyncTargetsFile: URL {
+        configDir.appendingPathComponent("guide-sync-targets.json")
+    }
+
+    static var guideTemplatesDir: URL {
+        configDir.appendingPathComponent("guides", isDirectory: true)
+    }
+
+    static func guideTemplateFile(_ kind: GuideTemplateKind) -> URL {
+        guideTemplatesDir.appendingPathComponent(kind.fileName)
+    }
+
     /// All known Ghostty config locations (macOS App Support, then XDG).
     static var ghosttyConfigCandidates: [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser

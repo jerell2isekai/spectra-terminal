@@ -181,6 +181,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                            action: { [weak self] in self?.previousPaneTab(nil) }))
         items.append(.init(title: "Settings", subtitle: "Cmd+,", icon: "gearshape",
                            action: { [weak self] in self?.openSettings(nil) }))
+        items.append(.init(title: "Guide Sync", subtitle: "", icon: "arrow.triangle.branch",
+                           action: { [weak self] in self?.openGuideSync(nil) }))
         items.append(.init(title: "Toggle Sidebar", subtitle: "Cmd+\\", icon: "sidebar.left",
                            action: { [weak self] in self?.toggleSidebar(nil) }))
         items.append(.init(title: "Reload Config", subtitle: "", icon: "arrow.clockwise",
@@ -284,6 +286,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         wc.showOverlay(title: "About", content: AboutContentView(), size: .small)
+    }
+
+    @objc func openGuideSync(_ sender: Any?) {
+        guard let wc = mainWC() else { return }
+        wc.showGuideSync()
     }
 
     @objc func openConfigFile(_ sender: Any?) {
@@ -452,6 +459,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "About Spectra", action: #selector(showAbout(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "Guide Sync…", action: #selector(openGuideSync(_:)), keyEquivalent: "")
         appMenu.addItem(withTitle: "Open Config File", action: #selector(openConfigFile(_:)), keyEquivalent: "")
         appMenu.addItem(withTitle: "Reload Config", action: #selector(reloadConfig(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
@@ -485,6 +493,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         shellMenu.addItem(withTitle: "Close", action: #selector(closeTab(_:)), keyEquivalent: "w")
         shellMenuItem.submenu = shellMenu
         mainMenu.addItem(shellMenuItem)
+
+        // Edit menu
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+
+        let redoItem = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
 
         // View menu
         let viewMenuItem = NSMenuItem()

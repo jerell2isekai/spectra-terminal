@@ -22,4 +22,7 @@ assets/AppIcon.iconset/
 # Claude Code
 AGENTS.md
 CLAUDE.md
+!Sources/Spectra/Resources/Guides/
+!Sources/Spectra/Resources/Guides/AGENTS.md
+!Sources/Spectra/Resources/Guides/CLAUDE.md
 .claude/
