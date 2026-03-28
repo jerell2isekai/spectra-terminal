@@ -1,0 +1,22 @@
+name: Mirror to spectra-terminal
+
+on:
+  push:
+    branches:
+      - release-public
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release-public
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to spectra-terminal
+        env:
+          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+        run: |
+          git remote add public "https://x-access-token:${MIRROR_PAT}@github.com/jerell2isekai/spectra-terminal.git"
+          git push public release-public:main --force
