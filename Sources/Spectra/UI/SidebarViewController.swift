@@ -26,6 +26,7 @@ class SidebarViewController: NSViewController {
     // MARK: - Tab bar
     private var tabBar: NSSegmentedControl!
     private var openFolderButton: NSButton!
+    private var showHiddenFilesButton: NSButton!
     private var refreshButton: NSButton!
     private var headerView: NSView!
     private var rootLabel: NSTextField!
@@ -42,10 +43,18 @@ class SidebarViewController: NSViewController {
     // MARK: - State
     private var rootNode: FileNode?
     private(set) var rootURL: URL?
+    private var showsHiddenFiles: Bool = UserDefaults.standard.bool(forKey: "sidebarShowHiddenFiles")
     private var cachedGitStatuses: [String: FileNode.GitStatus] = [:]
     private var gitStatusGeneration: Int = 0
     private var discoveredRepos: [GitStatusProvider.RepoInfo] = []
     private var gitRows: [GitRow] = []
+    private lazy var gitAutoRefreshMonitor: GitAutoRefreshMonitor = {
+        let monitor = GitAutoRefreshMonitor()
+        monitor.onRefreshRequested = { [weak self] trigger in
+            self?.performGitStatusRefresh(trigger: trigger)
+        }
+        return monitor
+    }()
 
     enum GitRow {
         case repoHeader(name: String, branch: String, changeCount: Int)
@@ -130,6 +139,16 @@ class SidebarViewController: NSViewController {
         openFolderButton.toolTip = "Open Folder"
         openFolderButton.controlSize = .small
 
+        showHiddenFilesButton = NSButton(
+            image: NSImage(systemSymbolName: "eye.slash",
+                           accessibilityDescription: "Show Hidden Files")!,
+            target: self,
+            action: #selector(toggleShowHiddenFiles(_:))
+        )
+        showHiddenFilesButton.translatesAutoresizingMaskIntoConstraints = false
+        showHiddenFilesButton.bezelStyle = .accessoryBarAction
+        showHiddenFilesButton.controlSize = .small
+
         refreshButton = NSButton(
             image: NSImage(systemSymbolName: "arrow.clockwise",
                            accessibilityDescription: "Refresh")!,
@@ -144,7 +163,10 @@ class SidebarViewController: NSViewController {
         headerView.addSubview(tabBar)
         headerView.addSubview(rootLabel)
         headerView.addSubview(openFolderButton)
+        headerView.addSubview(showHiddenFilesButton)
         headerView.addSubview(refreshButton)
+
+        updateShowHiddenFilesButton()
 
         NSLayoutConstraint.activate([
             headerView.heightAnchor.constraint(equalToConstant: 48),
@@ -156,7 +178,9 @@ class SidebarViewController: NSViewController {
             // Action buttons right-aligned, same line as tabs
             refreshButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -4),
             refreshButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
-            openFolderButton.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor, constant: -2),
+            showHiddenFilesButton.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor, constant: -2),
+            showHiddenFilesButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
+            openFolderButton.trailingAnchor.constraint(equalTo: showHiddenFilesButton.leadingAnchor, constant: -2),
             openFolderButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
 
             // Root label below tab bar
@@ -240,13 +264,22 @@ class SidebarViewController: NSViewController {
         gitStatusGeneration += 1
         cachedGitStatuses = [:]
         rootNode = FileNode(url: url)
-        rootNode?.loadChildren()
+        rootNode?.loadChildren(showHiddenFiles: showsHiddenFiles)
         rootLabel.stringValue = url.lastPathComponent
         outlineView.reloadData()
         if rootNode != nil {
             outlineView.expandItem(rootNode)
         }
-        fetchAndApplyGitStatus()
+        gitAutoRefreshMonitor.startMonitoring(rootURL: url)
+        gitAutoRefreshMonitor.requestImmediateRefresh(.rootChanged)
+    }
+
+    func setGitRefreshWindowFocused(_ focused: Bool) {
+        gitAutoRefreshMonitor.setWindowFocused(focused)
+    }
+
+    func stopGitAutoRefreshMonitoring() {
+        gitAutoRefreshMonitor.stopMonitoring()
     }
 
     // MARK: - Tab Switching
@@ -255,9 +288,20 @@ class SidebarViewController: NSViewController {
         let isGitTab = sender.selectedSegment == 1
         fileTreeScrollView.isHidden = isGitTab
         gitScrollView.isHidden = !isGitTab
+        updateShowHiddenFilesButton()
+        if isGitTab {
+            gitAutoRefreshMonitor.requestVisibleRefreshIfNeeded()
+        }
     }
 
     // MARK: - Actions
+
+    @objc private func toggleShowHiddenFiles(_ sender: Any?) {
+        showsHiddenFiles.toggle()
+        UserDefaults.standard.set(showsHiddenFiles, forKey: "sidebarShowHiddenFiles")
+        updateShowHiddenFilesButton()
+        reloadFileTree()
+    }
 
     @objc private func openFolder(_ sender: Any?) {
         let panel = NSOpenPanel()
@@ -283,7 +327,27 @@ class SidebarViewController: NSViewController {
 
     @objc private func refreshTree(_ sender: Any?) {
         guard let url = rootURL else { return }
+        if tabBar.selectedSegment == 1 {
+            gitAutoRefreshMonitor.requestImmediateRefresh(.manual)
+        } else {
+            setRootDirectory(url)
+        }
+    }
+
+    private func reloadFileTree() {
+        guard let url = rootURL else { return }
         setRootDirectory(url)
+    }
+
+    private func updateShowHiddenFilesButton() {
+        let isFilesTab = tabBar?.selectedSegment != 1
+        let symbolName = showsHiddenFiles ? "eye" : "eye.slash"
+        let accessibilityDescription = showsHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
+        showHiddenFilesButton?.image = NSImage(systemSymbolName: symbolName,
+                                               accessibilityDescription: accessibilityDescription)
+        showHiddenFilesButton?.toolTip = showsHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
+        showHiddenFilesButton?.isEnabled = isFilesTab
+        showHiddenFilesButton?.alphaValue = isFilesTab ? 1.0 : 0.5
     }
 
     @objc private func outlineViewClicked(_ sender: Any?) {
@@ -328,11 +392,15 @@ class SidebarViewController: NSViewController {
 
     // MARK: - Git Status
 
-    private func fetchAndApplyGitStatus() {
+    private func performGitStatusRefresh(trigger _: GitAutoRefreshMonitor.Trigger) {
         guard let rootURL, let rootNode else {
+            cachedGitStatuses = [:]
+            discoveredRepos = []
             updateGitPanel(repos: [])
+            gitAutoRefreshMonitor.refreshDidFinish()
             return
         }
+
         let generation = gitStatusGeneration
         DispatchQueue.global(qos: .userInitiated).async {
             let repos = GitStatusProvider.discoverGitRepos(under: rootURL)
@@ -349,7 +417,10 @@ class SidebarViewController: NSViewController {
             }
 
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.gitStatusGeneration == generation else { return }
+                guard let self else { return }
+                defer { self.gitAutoRefreshMonitor.refreshDidFinish() }
+                guard self.gitStatusGeneration == generation else { return }
+
                 self.cachedGitStatuses = mergedStatuses
                 self.discoveredRepos = repos
                 GitStatusProvider.applyStatuses(mergedStatuses, to: rootNode, rootURL: rootURL)
@@ -637,7 +708,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
     func outlineViewItemWillExpand(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? FileNode else { return }
         if !node.isLoaded {
-            node.loadChildren()
+            node.loadChildren(showHiddenFiles: showsHiddenFiles)
             if let rootURL, !cachedGitStatuses.isEmpty {
                 GitStatusProvider.applyStatuses(cachedGitStatuses, to: node, rootURL: rootURL)
             }

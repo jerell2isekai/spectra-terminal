@@ -175,9 +175,7 @@ enum GitStatusProvider {
             relativePath = node.name
         }
 
-        if let status = statuses[relativePath] {
-            node.gitStatus = status
-        }
+        node.gitStatus = statuses[relativePath] ?? .unmodified
 
         if let children = node.children {
             for child in children {

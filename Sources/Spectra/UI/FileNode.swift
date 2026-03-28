@@ -54,13 +54,14 @@ class FileNode: NSObject {
     }
 
     /// Load direct children (directories first, then alphabetical).
-    func loadChildren() {
+    func loadChildren(showHiddenFiles: Bool = false) {
         guard isDirectory else { children = nil; return }
+        let options: FileManager.DirectoryEnumerationOptions = showHiddenFiles ? [] : [.skipsHiddenFiles]
         do {
             let contents = try FileManager.default.contentsOfDirectory(
                 at: url,
                 includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
-                options: [.skipsHiddenFiles]
+                options: options
             )
             children = contents
                 .sorted { lhs, rhs in

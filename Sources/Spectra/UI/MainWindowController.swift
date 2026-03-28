@@ -83,6 +83,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         )
 
         applyConfigAppearance()
+        sidebarVC.setGitRefreshWindowFocused(window.isKeyWindow)
     }
 
     required init?(coder: NSCoder) {
@@ -249,7 +250,17 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        sidebarVC.setGitRefreshWindowFocused(true)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        sidebarVC.setGitRefreshWindowFocused(false)
+    }
+
     func windowWillClose(_ notification: Notification) {
+        sidebarVC.setGitRefreshWindowFocused(false)
+        sidebarVC.stopGitAutoRefreshMonitoring()
         for ptc in splitVC.allPanes() {
             ptc.detachAll()
         }
