@@ -54,11 +54,11 @@ class PaneTabBarView: NSView {
         layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.95).cgColor
     }
 
-    func reload(titles: [String], activeIndex: Int) {
+    func reload(titles: [String], icons: [NSImage?]? = nil, activeIndex: Int) {
         // Fast path: same tab count — just update titles and active state
         if tabItems.count == titles.count {
             for (i, item) in tabItems.enumerated() {
-                item.update(title: titles[i], isActive: i == activeIndex)
+                item.update(title: titles[i], icon: icons?[i], isActive: i == activeIndex)
             }
             return
         }
@@ -69,7 +69,8 @@ class PaneTabBarView: NSView {
         addButton.removeFromSuperview()
 
         for (i, title) in titles.enumerated() {
-            let item = PaneTabItemView(title: title, index: i, isActive: i == activeIndex)
+            let icon = icons?[i]
+            let item = PaneTabItemView(title: title, icon: icon, index: i, isActive: i == activeIndex)
             item.onSelect = { [weak self] idx in
                 guard let self else { return }
                 self.delegate?.tabBar(self, didSelectTabAt: idx)
@@ -100,13 +101,23 @@ private class PaneTabItemView: NSView {
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
 
+    private let iconView: NSImageView?
     private let titleLabel: NSTextField
     private let closeButton: NSButton
     private var isHovered = false
 
-    init(title: String, index: Int, isActive: Bool) {
+    init(title: String, icon: NSImage? = nil, index: Int, isActive: Bool) {
         self.index = index
         self.isActive = isActive
+
+        if let icon {
+            let iv = NSImageView(image: icon)
+            iv.imageScaling = .scaleProportionallyDown
+            iv.translatesAutoresizingMaskIntoConstraints = false
+            self.iconView = iv
+        } else {
+            self.iconView = nil
+        }
 
         titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 11)
@@ -139,12 +150,26 @@ private class PaneTabItemView: NSView {
         addSubview(titleLabel)
         addSubview(closeButton)
 
+        let leadingAnchorRef: NSLayoutXAxisAnchor
+        if let iconView {
+            addSubview(iconView)
+            NSLayoutConstraint.activate([
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 14),
+                iconView.heightAnchor.constraint(equalToConstant: 14),
+            ])
+            leadingAnchorRef = iconView.trailingAnchor
+        } else {
+            leadingAnchorRef = leadingAnchor
+        }
+
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
             widthAnchor.constraint(lessThanOrEqualToConstant: 160),
             heightAnchor.constraint(equalToConstant: PaneTabBarView.barHeight - 4),
 
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchorRef, constant: icon != nil ? 4 : 8),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -2),
 
@@ -170,8 +195,9 @@ private class PaneTabItemView: NSView {
         }
     }
 
-    func update(title: String, isActive: Bool) {
+    func update(title: String, icon: NSImage? = nil, isActive: Bool) {
         titleLabel.stringValue = title
+        if let icon, let iconView { iconView.image = icon }
         self.isActive = isActive  // triggers updateAppearance via didSet
     }
 

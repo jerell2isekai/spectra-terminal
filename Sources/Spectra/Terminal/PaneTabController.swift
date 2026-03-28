@@ -1,10 +1,10 @@
 import AppKit
 import GhosttyKit
 
-/// Manages multiple terminal tabs within a single split pane.
+/// Manages multiple tabs (terminal and non-terminal) within a single split pane.
 ///
-/// Sits between SplitNode leaf and TerminalController(s).
-/// Tab switching uses hide/show (not destroy/recreate) to preserve scrollback and processes.
+/// Sits between SplitNode leaf and tab content controllers.
+/// Tab switching uses hide/show (not destroy/recreate) to preserve state.
 class PaneTabController {
     let containerView: NSView
     private let tabBarView: PaneTabBarView
@@ -12,15 +12,16 @@ class PaneTabController {
     private let bridge: GhosttyBridge
     private var tabBarHeightConstraint: NSLayoutConstraint!
 
-    private(set) var tabs: [TerminalController] = []
+    private(set) var tabs: [any TabContent] = []
     private(set) var activeTabIndex: Int = 0
     private var tabTitles: [String] = []
 
     /// Called when the last tab is closed — signals pane removal.
     var onClose: (() -> Void)?
 
-    var activeTerminal: TerminalController {
-        tabs[activeTabIndex]
+    /// The active tab as a TerminalController, if it is one.
+    var activeTerminal: TerminalController? {
+        tabs.isEmpty ? nil : tabs[activeTabIndex] as? TerminalController
     }
 
     init(bridge: GhosttyBridge) {
@@ -66,7 +67,7 @@ class PaneTabController {
 
     // MARK: - Tab Management
 
-    /// Add a new tab and return its TerminalController.
+    /// Add a new terminal tab and return its TerminalController.
     @discardableResult
     func addTab() -> TerminalController {
         let tc = TerminalController(bridge: bridge)
@@ -77,26 +78,35 @@ class PaneTabController {
             }
         }
 
-        tabs.append(tc)
-        tabTitles.append("Terminal")
+        insertTab(tc, title: "Terminal")
+        return tc
+    }
 
-        // Add surface to content view (hidden initially)
-        let surface = tc.surface
-        surface.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(surface)
+    /// Add a non-terminal tab (e.g. supervisor).
+    func addCustomTab(_ tab: any TabContent) {
+        insertTab(tab, title: tab.tabTitle)
+    }
+
+    /// Shared logic for inserting any tab type.
+    private func insertTab(_ tab: any TabContent, title: String) {
+        tabs.append(tab)
+        tabTitles.append(title)
+
+        // Add content view (hidden initially)
+        let view = tab.contentView
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(view)
         NSLayoutConstraint.activate([
-            surface.topAnchor.constraint(equalTo: contentView.topAnchor),
-            surface.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            surface.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            surface.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            view.topAnchor.constraint(equalTo: contentView.topAnchor),
+            view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
         ])
-        surface.isHidden = true
+        view.isHidden = true
 
         // Switch to new tab
         selectTab(at: tabs.count - 1)
         updateTabBar()
-
-        return tc
     }
 
     /// Close a tab by index. If it's the last tab, triggers onClose (pane removal).
@@ -114,8 +124,8 @@ class PaneTabController {
             return
         }
 
-        let tc = tabs[index]
-        tc.detach()
+        let tab = tabs[index]
+        tab.detach()  // detach() is responsible for removing contentView from superview
         tabs.remove(at: index)
         tabTitles.remove(at: index)
 
@@ -131,7 +141,7 @@ class PaneTabController {
         // Show the now-active tab and focus it
         showOnlyActiveTab()
         updateTabBar()
-        activeTerminal.focus()
+        tabs[activeTabIndex].focus()
     }
 
     /// Switch to a tab by index.
@@ -154,21 +164,22 @@ class PaneTabController {
         selectTab(at: (activeTabIndex - 1 + tabs.count) % tabs.count)
     }
 
-    /// All terminals across all tabs.
+    /// All terminal controllers across all tabs.
     func allTerminals() -> [TerminalController] {
-        tabs
+        tabs.compactMap { $0 as? TerminalController }
     }
 
-    /// Detach and destroy all terminals.
+    /// Detach and destroy all tabs.
     func detachAll() {
-        for tc in tabs { tc.detach() }
+        for tab in tabs { tab.detach() }
         tabs.removeAll()
         tabTitles.removeAll()
     }
 
-    /// Create ghostty surfaces for all tabs.
+    /// Create ghostty surfaces for terminal tabs only.
     func createSurfaces(app: ghostty_app_t, workingDirectories: [String?]? = nil) {
-        for (i, tc) in tabs.enumerated() {
+        let terminals = allTerminals()
+        for (i, tc) in terminals.enumerated() {
             let wd = workingDirectories.flatMap { i < $0.count ? $0[i] : nil }
             tc.surface.createSurface(app: app, workingDirectory: wd)
         }
@@ -182,8 +193,8 @@ class PaneTabController {
     // MARK: - Private
 
     private func showOnlyActiveTab() {
-        for (i, tc) in tabs.enumerated() {
-            tc.surface.isHidden = (i != activeTabIndex)
+        for (i, tab) in tabs.enumerated() {
+            tab.contentView.isHidden = (i != activeTabIndex)
         }
     }
 
@@ -193,7 +204,8 @@ class PaneTabController {
         tabBarHeightConstraint.constant = shouldShow ? PaneTabBarView.barHeight : 0
 
         if shouldShow {
-            tabBarView.reload(titles: tabTitles, activeIndex: activeTabIndex)
+            let icons = tabs.map { $0.tabIcon }
+            tabBarView.reload(titles: tabTitles, icons: icons, activeIndex: activeTabIndex)
         }
     }
 
@@ -203,14 +215,15 @@ class PaneTabController {
         guard let info = notification.userInfo,
               let surface = info["surface"] as? ghostty_surface_t,
               let title = info["title"] as? String else { return }
-        for (i, tc) in tabs.enumerated() {
-            if let s = tc.surface.surface, s == surface {
-                tabTitles[i] = title
-                if tabs.count > 1 {
-                    tabBarView.reload(titles: tabTitles, activeIndex: activeTabIndex)
-                }
-                break
+        for (i, tab) in tabs.enumerated() {
+            guard let tc = tab as? TerminalController,
+                  let s = tc.surface.surface, s == surface else { continue }
+            tabTitles[i] = title
+            if tabs.count > 1 {
+                let icons = tabs.map { $0.tabIcon }
+                tabBarView.reload(titles: tabTitles, icons: icons, activeIndex: activeTabIndex)
             }
+            break
         }
     }
 }
@@ -220,7 +233,7 @@ class PaneTabController {
 extension PaneTabController: PaneTabBarDelegate {
     func tabBar(_ tabBar: PaneTabBarView, didSelectTabAt index: Int) {
         selectTab(at: index)
-        activeTerminal.focus()
+        tabs[activeTabIndex].focus()
     }
 
     func tabBar(_ tabBar: PaneTabBarView, didCloseTabAt index: Int) {
@@ -232,6 +245,6 @@ extension PaneTabController: PaneTabBarDelegate {
         if let app = bridge.app {
             tc.surface.createSurface(app: app)
         }
-        activeTerminal.focus()
+        tabs[activeTabIndex].focus()
     }
 }

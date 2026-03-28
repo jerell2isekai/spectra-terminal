@@ -49,3 +49,12 @@ class TerminalController {
         surface.window?.makeFirstResponder(surface)
     }
 }
+
+// MARK: - TabContent
+
+extension TerminalController: TabContent {
+    var contentView: NSView { surface }
+    var tabTitle: String { "Terminal" }
+    var tabIcon: NSImage? { nil }
+    var tabType: TabType { .terminal }
+}

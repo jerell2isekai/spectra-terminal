@@ -190,7 +190,7 @@ class SplitViewController: NSViewController {
         let initial = PaneTabController(bridge: bridge)
         initial.addTab()
         self.rootNode = .pane(initial)
-        self.focusedTerminal = initial.activeTerminal
+        self.focusedTerminal = initial.activeTerminal!
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -282,15 +282,17 @@ class SplitViewController: NSViewController {
             newPTC.createSurfaces(app: app, workingDirectory: focusedTerminal?.surface.currentWorkingDirectory)
         }
 
-        setExclusiveFocus(newPTC.activeTerminal, in: newPTC)
-        newPTC.activeTerminal.focus()
+        if let tc = newPTC.activeTerminal {
+            setExclusiveFocus(tc, in: newPTC)
+            tc.focus()
+        }
     }
 
     /// Close an entire pane (all its tabs) from the tree.
     func closePaneTab(_ ptc: PaneTabController) {
         let panes = allPanes()
         if panes.count <= 1 {
-            onSurfaceClose?(ptc.activeTerminal)
+            if let tc = ptc.activeTerminal { onSurfaceClose?(tc) }
             return
         }
 
@@ -308,6 +310,16 @@ class SplitViewController: NSViewController {
         }
     }
 
+    /// Open an Agents Supervisor tab in the focused pane.
+    func openSupervisorTab() {
+        guard let ptc = focusedPane else { return }
+        let supervisor = SupervisorController()
+        ptc.addCustomTab(supervisor)
+        focusedTerminal = nil
+        focusedPane = ptc
+        supervisor.focus()
+    }
+
     /// Add a new tab to the focused pane.
     func newPaneTab() {
         guard focusedTerminal != nil,
@@ -320,27 +332,36 @@ class SplitViewController: NSViewController {
         tc.focus()
     }
 
-    /// Close the focused tab (or pane if it's the last tab).
+    /// Close the active tab (terminal or supervisor) in the focused pane.
     func closeCurrentPaneTab() {
-        guard let focused = focusedTerminal,
-              let ptc = focusedPane,
-              let idx = ptc.tabs.firstIndex(where: { $0 === focused }) else { return }
-        ptc.closeTab(at: idx)
+        guard let ptc = focusedPane else { return }
+        ptc.closeTab(at: ptc.activeTabIndex)
     }
 
     /// Navigate to next/previous tab within the focused pane.
     func nextPaneTab() {
         guard let ptc = focusedPane else { return }
         ptc.selectNextTab()
-        setExclusiveFocus(ptc.activeTerminal, in: ptc)
-        ptc.activeTerminal.focus()
+        focusActiveTab(in: ptc)
     }
 
     func previousPaneTab() {
         guard let ptc = focusedPane else { return }
         ptc.selectPreviousTab()
-        setExclusiveFocus(ptc.activeTerminal, in: ptc)
-        ptc.activeTerminal.focus()
+        focusActiveTab(in: ptc)
+    }
+
+    /// Focus the active tab in a pane, handling both terminal and non-terminal tabs.
+    private func focusActiveTab(in ptc: PaneTabController) {
+        if let tc = ptc.activeTerminal {
+            setExclusiveFocus(tc, in: ptc)
+            tc.focus()
+        } else {
+            // Non-terminal tab (e.g. supervisor) — clear terminal focus, keep pane tracked
+            focusedTerminal = nil
+            focusedPane = ptc
+            ptc.tabs[ptc.activeTabIndex].focus()
+        }
     }
 
     /// Navigate between split panes (cycles through active tab of each pane).
@@ -357,9 +378,7 @@ class SplitViewController: NSViewController {
         }
 
         let nextPane = panes[newIdx]
-        let target = nextPane.activeTerminal
-        setExclusiveFocus(target, in: nextPane)
-        target.focus()
+        focusActiveTab(in: nextPane)
     }
 
     func allTerminals() -> [TerminalController] {
@@ -386,11 +405,16 @@ class SplitViewController: NSViewController {
     private func captureNode(_ node: SplitNode, savePaths: Bool) -> SplitLayoutStore.Layout.Node {
         switch node {
         case .pane(let ptc):
-            let tabs = ptc.tabs.map { tc -> TabInfo in
+            // Only serialize terminal tabs; supervisor tabs are ephemeral (Phase 1).
+            let terminals = ptc.allTerminals()
+            let tabs = terminals.map { tc -> TabInfo in
                 let wd = savePaths ? tc.surface.currentWorkingDirectory : nil
                 return TabInfo(workingDirectory: wd)
             }
-            return .terminal(tabs: tabs, activeTabIndex: ptc.activeTabIndex)
+            // Map the full-array activeTabIndex to the terminal-only index.
+            let activeTC = ptc.activeTerminal
+            let terminalActiveIdx = activeTC.flatMap { tc in terminals.firstIndex(where: { $0 === tc }) } ?? 0
+            return .terminal(tabs: tabs, activeTabIndex: terminalActiveIdx)
         case .split(let container, let dir, let first, let second):
             return .split(direction: dir == .horizontal ? "horizontal" : "vertical",
                           ratio: Double(container.ratio),
@@ -423,9 +447,9 @@ class SplitViewController: NSViewController {
                 }
             }
         }
-        if let firstPane = allPanes().first {
-            setExclusiveFocus(firstPane.activeTerminal, in: firstPane)
-            firstPane.activeTerminal.focus()
+        if let firstPane = allPanes().first, let tc = firstPane.activeTerminal {
+            setExclusiveFocus(tc, in: firstPane)
+            tc.focus()
         }
     }
 

@@ -320,6 +320,9 @@ class TerminalSurface: NSView, NSTextInputClient {
         menu.addItem(item("Save Layout…", #selector(contextSaveLayout(_:)), symbol: "square.and.arrow.down"))
         menu.addItem(item("Load Layout…", #selector(contextLoadLayout(_:)), symbol: "square.and.arrow.up"))
 
+        menu.addItem(.separator())
+        menu.addItem(item("Open Agents Supervisor", #selector(contextOpenSupervisor(_:)), symbol: "brain.head.profile"))
+
         // Dynamic width: measure longest title + icon + margins
         let font = NSFont.menuFont(ofSize: 0)
         let maxTitle = menu.items
@@ -482,6 +485,11 @@ class TerminalSurface: NSView, NSTextInputClient {
                 SplitLayoutStore.delete(name: name)
             }
         }
+    }
+
+    @objc private func contextOpenSupervisor(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.splitVC.openSupervisorTab()
     }
 
     // MARK: - Mouse Events
