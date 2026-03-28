@@ -58,6 +58,29 @@ class AboutContentView: NSView {
         descLabel.maximumNumberOfLines = 2
         stack.addArrangedSubview(descLabel)
 
+        // Links
+        stack.setCustomSpacing(16, after: descLabel)
+        let linksStack = NSStackView()
+        linksStack.orientation = .horizontal
+        linksStack.spacing = 16
+
+        let websiteButton = makeLink(title: "Website", url: "https://spectra.librefox.app")
+        let githubButton = makeLink(title: "GitHub", url: "https://github.com/jerell2isekai/spectra")
+        let releasesButton = makeLink(title: "Releases", url: "https://github.com/jerell2isekai/spectra/releases")
+
+        linksStack.addArrangedSubview(websiteButton)
+        linksStack.addArrangedSubview(githubButton)
+        linksStack.addArrangedSubview(releasesButton)
+        stack.addArrangedSubview(linksStack)
+
+        // Ghostty acknowledgment
+        stack.setCustomSpacing(12, after: linksStack)
+        let ackLabel = NSTextField(labelWithString: "Built on libghostty by the Ghostty team")
+        ackLabel.font = .systemFont(ofSize: 11)
+        ackLabel.textColor = .quaternaryLabelColor
+        ackLabel.alignment = .center
+        stack.addArrangedSubview(ackLabel)
+
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
@@ -65,5 +88,22 @@ class AboutContentView: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+    }
+
+    private func makeLink(title: String, url: String) -> NSButton {
+        let button = NSButton(title: title, target: self, action: #selector(openLink(_:)))
+        button.bezelStyle = .accessoryBarAction
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 12)
+        button.contentTintColor = .controlAccentColor
+        button.toolTip = url
+        button.identifier = NSUserInterfaceItemIdentifier(url)
+        return button
+    }
+
+    @objc private func openLink(_ sender: NSButton) {
+        guard let urlString = sender.identifier?.rawValue,
+              let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
