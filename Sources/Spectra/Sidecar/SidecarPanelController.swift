@@ -28,11 +28,29 @@ final class SidecarPanelController: NSObject {
 
     // MARK: - Private State
 
+    private final class WeakTerminalRef {
+        weak var value: TerminalController?
+
+        init(_ value: TerminalController) {
+            self.value = value
+        }
+    }
+
+    private struct TerminalChoice {
+        let id: ObjectIdentifier
+        let title: String
+        let ref: WeakTerminalRef
+
+        var controller: TerminalController? { ref.value }
+    }
+
     private var sessions: [PiRPCSession?]
     private var models: [ReviewModelConfig]
     private var enabledFlags: [Bool]
     private var isReviewActive = false
     private weak var targetTerminal: TerminalController?
+    private var explicitTargetTerminalId: ObjectIdentifier?
+    private var terminalChoices: [TerminalChoice] = []
     private var currentSnapshot: ReviewSnapshot?
     private var reviewStartTimes: [Int: Date] = [:]
     private let piPath: String
@@ -81,6 +99,9 @@ final class SidecarPanelController: NSObject {
         panelView.onModelToggle = { [weak self] index, enabled in
             self?.toggleModel(at: index, enabled: enabled)
         }
+        panelView.onTerminalSelection = { [weak self] index in
+            self?.selectTerminal(at: index)
+        }
         panelView.appendLog("Sidecar init: piPath=\(self.piPath.isEmpty ? "(empty)" : self.piPath)")
         panelView.appendLog("Models: \(self.models.map(\.displayName).joined(separator: ", "))")
         panelView.grabButton.target = self
@@ -99,22 +120,57 @@ final class SidecarPanelController: NSObject {
 
     // MARK: - Target Terminal
 
-    func setTarget(_ terminal: TerminalController?) {
-        targetTerminal = terminal
-    }
-
     /// Refresh terminal selector popup from the provided terminal list.
-    func updateTerminalList(_ terminals: [(title: String, controller: TerminalController)]) {
-        panelView.updateTerminalList(terminals.map(\.title))
-        if targetTerminal == nil, let first = terminals.first {
-            targetTerminal = first.controller
+    /// Preserves the current explicit selection when still valid; otherwise falls back
+    /// to the preferred target, then to the first available terminal.
+    func updateTerminalList(
+        _ terminals: [(title: String, controller: TerminalController)],
+        preferredTarget: TerminalController? = nil
+    ) {
+        let currentTargetId = targetTerminal.map(ObjectIdentifier.init)
+        terminalChoices = terminals.map {
+            TerminalChoice(id: ObjectIdentifier($0.controller), title: $0.title, ref: WeakTerminalRef($0.controller))
         }
+
+        let explicitSelectionIndex = indexOfTerminal(withId: explicitTargetTerminalId)
+        if explicitSelectionIndex == nil {
+            explicitTargetTerminalId = nil
+        }
+
+        let selectedIndex = explicitSelectionIndex
+            ?? indexOfTerminal(withId: preferredTarget.map(ObjectIdentifier.init))
+            ?? indexOfTerminal(withId: currentTargetId)
+            ?? terminalChoices.indices.first
+
+        if let selectedIndex,
+           let selectedTerminal = terminalChoices[selectedIndex].controller {
+            targetTerminal = selectedTerminal
+        } else {
+            targetTerminal = nil
+        }
+
+        panelView.updateTerminalList(terminalChoices.map(\.title), selectedIndex: selectedIndex)
     }
 
     // MARK: - Grab Context
 
     private func log(_ message: String) {
         panelView.appendLog(message)
+    }
+
+    private func indexOfTerminal(withId id: ObjectIdentifier?) -> Int? {
+        guard let id else { return nil }
+        return terminalChoices.firstIndex { $0.id == id && $0.controller != nil }
+    }
+
+    private func selectTerminal(at index: Int) {
+        guard index >= 0, index < terminalChoices.count,
+              let terminal = terminalChoices[index].controller else {
+            return
+        }
+        explicitTargetTerminalId = terminalChoices[index].id
+        targetTerminal = terminal
+        log("Selected target terminal: \(terminalChoices[index].title)")
     }
 
     @objc private func grabAction(_ sender: Any?) {
@@ -381,6 +437,8 @@ final class SidecarPanelController: NSObject {
                 let elapsed = reviewStartTimes[i].map { Date().timeIntervalSince($0) } ?? 0
                 if let usage = sessions[i]?.lastUsage {
                     section.setUsage(usage, elapsed: elapsed)
+                } else {
+                    section.finishWaitingState()
                 }
                 panelView.setModelStatus(i, status: .done(seconds: elapsed))
                 checkAllDone()
@@ -407,6 +465,8 @@ final class SidecarPanelController: NSObject {
             if let text, section.textView.string.isEmpty {
                 log("  [\(name)] using agent_end text as fallback")
                 section.appendText(text)
+            } else {
+                section.finishWaitingState()
             }
             panelView.setModelStatus(i, status: .done(seconds: elapsed))
             checkAllDone()

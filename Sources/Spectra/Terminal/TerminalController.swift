@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 
 /// Manages the lifecycle of a single terminal instance.
 ///
@@ -8,6 +9,8 @@ import AppKit
 class TerminalController {
     let surface: TerminalSurface
     private let bridge: GhosttyBridge
+    private var currentTitle: String?
+    private var titleObserver: NSObjectProtocol?
 
     /// Called when this terminal's surface should be closed.
     var onClose: (() -> Void)?
@@ -17,6 +20,21 @@ class TerminalController {
         self.surface = TerminalSurface(frame: .zero)
         self.surface.onClose = { [weak self] in
             self?.onClose?()
+        }
+        self.titleObserver = NotificationCenter.default.addObserver(
+            forName: GhosttyBridge.titleDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let info = notification.userInfo,
+                  let notifSurface = info["surface"] as? ghostty_surface_t,
+                  let title = info["title"] as? String,
+                  let ourSurface = self.surface.surface,
+                  ourSurface == notifSurface else { return }
+
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.currentTitle = trimmed.isEmpty ? nil : trimmed
         }
     }
 
@@ -48,13 +66,19 @@ class TerminalController {
     func focus() {
         surface.window?.makeFirstResponder(surface)
     }
+
+    deinit {
+        if let titleObserver {
+            NotificationCenter.default.removeObserver(titleObserver)
+        }
+    }
 }
 
 // MARK: - TabContent
 
 extension TerminalController: TabContent {
     var contentView: NSView { surface }
-    var tabTitle: String { "Terminal" }
+    var tabTitle: String { currentTitle ?? "Terminal" }
     var tabIcon: NSImage? { nil }
     var tabType: TabType { .terminal }
 }

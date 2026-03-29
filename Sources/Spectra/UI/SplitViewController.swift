@@ -150,6 +150,8 @@ class SplitViewController: NSViewController {
     private(set) var focusedPane: PaneTabController?
 
     var onSurfaceClose: ((_ terminal: TerminalController) -> Void)?
+    var onFocusChange: ((_ terminal: TerminalController?) -> Void)?
+    var onTerminalInventoryChange: (() -> Void)?
 
     enum Direction {
         case horizontal
@@ -248,6 +250,8 @@ class SplitViewController: NSViewController {
         if let s = target.surface.surface {
             ghostty_surface_set_focus(s, true)
         }
+
+        onFocusChange?(target)
     }
 
     // MARK: - Public API
@@ -286,6 +290,7 @@ class SplitViewController: NSViewController {
             setExclusiveFocus(tc, in: newPTC)
             tc.focus()
         }
+        onTerminalInventoryChange?()
     }
 
     /// Close an entire pane (all its tabs) from the tree.
@@ -308,6 +313,7 @@ class SplitViewController: NSViewController {
             setExclusiveFocus(next, in: nextPTC)
             next.focus()
         }
+        onTerminalInventoryChange?()
     }
 
     /// Add a new tab to the focused pane.
@@ -350,6 +356,7 @@ class SplitViewController: NSViewController {
             // Non-terminal tab (e.g. supervisor) — clear terminal focus, keep pane tracked
             focusedTerminal = nil
             focusedPane = ptc
+            onFocusChange?(nil)
             ptc.tabs[ptc.activeTabIndex].focus()
         }
     }
@@ -498,6 +505,9 @@ class SplitViewController: NSViewController {
             ptc.onClose = { [weak self, weak ptc] in
                 guard let self, let ptc else { return }
                 self.closePaneTab(ptc)
+            }
+            ptc.onTabsChanged = { [weak self] in
+                self?.onTerminalInventoryChange?()
             }
         }
     }

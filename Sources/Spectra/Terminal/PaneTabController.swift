@@ -19,6 +19,9 @@ class PaneTabController {
     /// Called when the last tab is closed — signals pane removal.
     var onClose: (() -> Void)?
 
+    /// Called when terminal inventory in this pane changes without removing the whole pane.
+    var onTabsChanged: (() -> Void)?
+
     /// The active tab as a TerminalController, if it is one.
     var activeTerminal: TerminalController? {
         tabs.isEmpty ? nil : tabs[activeTabIndex] as? TerminalController
@@ -107,6 +110,7 @@ class PaneTabController {
         // Switch to new tab
         selectTab(at: tabs.count - 1)
         updateTabBar()
+        onTabsChanged?()
     }
 
     /// Close a tab by index. If it's the last tab, triggers onClose (pane removal).
@@ -142,6 +146,7 @@ class PaneTabController {
         showOnlyActiveTab()
         updateTabBar()
         tabs[activeTabIndex].focus()
+        onTabsChanged?()
     }
 
     /// Switch to a tab by index.

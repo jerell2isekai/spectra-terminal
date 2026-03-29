@@ -30,6 +30,9 @@ final class SidecarPanelView: NSView {
     /// Called when user toggles a model checkbox. Parameters: (index, enabled).
     var onModelToggle: ((Int, Bool) -> Void)?
 
+    /// Called when user selects a target terminal from the popup.
+    var onTerminalSelection: ((Int) -> Void)?
+
     // Debug log
     private let logTextView = NSTextView()
 
@@ -123,9 +126,16 @@ final class SidecarPanelView: NSView {
     }
 
     /// Update terminal selector with available terminals.
-    func updateTerminalList(_ titles: [String]) {
+    func updateTerminalList(_ titles: [String], selectedIndex: Int?) {
         terminalSelector.removeAllItems()
         terminalSelector.addItems(withTitles: titles)
+        terminalSelector.isEnabled = !titles.isEmpty
+
+        if let selectedIndex,
+           selectedIndex >= 0,
+           selectedIndex < titles.count {
+            terminalSelector.selectItem(at: selectedIndex)
+        }
     }
 
     /// Show captured context preview and enable input.
@@ -143,6 +153,10 @@ final class SidecarPanelView: NSView {
         inputField.stringValue = ""
         inputField.isEnabled = false
         sendButton.isEnabled = false
+    }
+
+    @objc private func handleTerminalSelection(_ sender: NSPopUpButton) {
+        onTerminalSelection?(sender.indexOfSelectedItem)
     }
 
     /// Append a timestamped log line to the debug log area.
@@ -174,6 +188,9 @@ final class SidecarPanelView: NSView {
 
         // Terminal selector
         terminalSelector.controlSize = .small
+        terminalSelector.target = self
+        terminalSelector.action = #selector(handleTerminalSelection(_:))
+        terminalSelector.isEnabled = false
 
         // Model status stack
         modelStack.orientation = .vertical
@@ -405,7 +422,8 @@ final class ReviewResultSection {
     private let headerButton: NSButton
     private let usageLabel: NSTextField
     private let textScrollView: NSScrollView
-    private let placeholderText = "Debug placeholder: result view is rendering"
+    private let waitingText = "Waiting for model response…"
+    private var isWaitingForResponse = false
 
     init(displayName: String) {
         headerButton = NSButton(title: "▾ \(displayName)", target: nil, action: nil)
@@ -486,9 +504,9 @@ final class ReviewResultSection {
 
     /// Append streaming text delta.
     func appendText(_ text: String) {
-        if textView.string == placeholderText {
-            textView.string = ""
-            textView.textColor = .labelColor
+        if isWaitingForResponse {
+            usageLabel.stringValue = ""
+            isWaitingForResponse = false
         }
         textView.textStorage?.append(NSAttributedString(
             string: text,
@@ -507,28 +525,37 @@ final class ReviewResultSection {
 
     /// Clear content for new review.
     func clear() {
-        textView.textStorage?.setAttributedString(NSAttributedString(
-            string: placeholderText,
-            attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-        ))
-        textView.textColor = .secondaryLabelColor
-        usageLabel.stringValue = ""
+        textView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+        textView.textColor = .labelColor
+        usageLabel.stringValue = waitingText
+        isWaitingForResponse = true
         let base = headerButton.title.components(separatedBy: " (").first ?? headerButton.title
         headerButton.title = base
     }
 
     /// Set usage info after completion.
     func setUsage(_ usage: PiTokenUsage, elapsed: TimeInterval) {
+        isWaitingForResponse = false
         usageLabel.stringValue = "\(usage.inputTokens) in / \(usage.outputTokens) out · \(String(format: "%.1f", elapsed))s"
         let base = headerButton.title.components(separatedBy: " (").first ?? headerButton.title
         headerButton.title = "\(base) (\(String(format: "%.1f", elapsed))s)"
     }
 
     func setError(_ message: String) {
-        appendText("\n⚠️ Error: \(message)\n")
+        isWaitingForResponse = false
+        if usageLabel.stringValue == waitingText {
+            usageLabel.stringValue = ""
+        }
+        let prefix = textView.string.isEmpty || textView.string.hasSuffix("\n") ? "" : "\n"
+        appendText("\(prefix)⚠️ Error: \(message)\n")
+    }
+
+    func finishWaitingState() {
+        guard isWaitingForResponse else { return }
+        isWaitingForResponse = false
+        if usageLabel.stringValue == waitingText {
+            usageLabel.stringValue = ""
+        }
     }
 }
 

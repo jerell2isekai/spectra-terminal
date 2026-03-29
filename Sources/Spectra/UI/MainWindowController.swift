@@ -75,6 +75,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         splitVC.onSurfaceClose = { [weak self] _ in
             self?.window?.performClose(nil)
         }
+        splitVC.onFocusChange = { [weak self] _ in
+            guard let self, self.isSidecarOpen else { return }
+            self.updateSidecarTarget()
+        }
+        splitVC.onTerminalInventoryChange = { [weak self] in
+            guard let self, self.isSidecarOpen else { return }
+            self.updateSidecarTarget()
+        }
 
         // Notifications
         NotificationCenter.default.addObserver(
@@ -252,33 +260,43 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Update the sidecar panel's target terminal to the currently focused one.
+    /// Refresh the sidecar panel's terminal selector.
+    /// Keeps the current explicit selection when still valid; otherwise falls back
+    /// to the currently focused terminal, then the first available terminal.
     func updateSidecarTarget() {
         let sidecar = workspaceVC.sidecarPanelController
 
-        // Set target to focused terminal
-        if let focused = splitVC.focusedTerminal {
-            sidecar.setTarget(focused)
+        let terminals = splitVC.allTerminals().enumerated().map { (i, tc) in
+            let baseTitle = tc.tabTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayTitle = baseTitle.isEmpty ? "Terminal" : baseTitle
+            return (title: "\(i + 1). \(displayTitle)", controller: tc)
         }
 
-        // Update terminal selector with all available terminals
-        let terminals = splitVC.allTerminals().enumerated().map { (i, tc) in
-            (title: tc.tabTitle.isEmpty ? "Terminal \(i + 1)" : tc.tabTitle, controller: tc)
-        }
-        sidecar.updateTerminalList(terminals)
+        sidecar.updateTerminalList(terminals, preferredTarget: splitVC.focusedTerminal)
     }
 
     // MARK: - Notifications
 
     @objc private func handleTitleChange(_ notification: Notification) {
         guard let info = notification.userInfo,
-              let surface = info["surface"],
+              let notifSurface = info["surface"] as? ghostty_surface_t,
               let title = info["title"] as? String else { return }
+
         if let focused = splitVC.focusedTerminal,
            let ourSurface = focused.surface.surface,
-           let notifSurface = surface as? ghostty_surface_t,
            ourSurface == notifSurface {
             window?.title = title
+        }
+
+        let ownsChangedSurface = splitVC.allTerminals().contains {
+            guard let terminalSurface = $0.surface.surface else { return false }
+            return terminalSurface == notifSurface
+        }
+        if isSidecarOpen && ownsChangedSurface {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isSidecarOpen else { return }
+                self.updateSidecarTarget()
+            }
         }
     }
 
