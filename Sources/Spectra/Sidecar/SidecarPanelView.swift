@@ -23,7 +23,6 @@ final class SidecarPanelView: NSView {
     private let modelStack = NSStackView()
     private var modelStatusViews: [ModelStatusView] = []
     private let resultsStack = NSStackView()
-    private let scrollView = NSScrollView()
     private(set) var resultSections: [ReviewResultSection] = []
 
     // Debug log
@@ -173,27 +172,12 @@ final class SidecarPanelView: NSView {
         buttonStack.alignment = .leading
         buttonStack.spacing = 6
 
-        // Results area
+        // Results area — plain container, no outer scroll.
+        // Each ReviewResultSection owns its own scrollable body.
         resultsStack.orientation = .vertical
         resultsStack.alignment = .leading
-        resultsStack.spacing = 12
-
-        let resultsContainer = NSView()
-        resultsContainer.translatesAutoresizingMaskIntoConstraints = false
+        resultsStack.spacing = 8
         resultsStack.translatesAutoresizingMaskIntoConstraints = false
-        resultsContainer.addSubview(resultsStack)
-        NSLayoutConstraint.activate([
-            resultsStack.topAnchor.constraint(equalTo: resultsContainer.topAnchor, constant: 8),
-            resultsStack.leadingAnchor.constraint(equalTo: resultsContainer.leadingAnchor, constant: 8),
-            resultsStack.trailingAnchor.constraint(equalTo: resultsContainer.trailingAnchor, constant: -8),
-            resultsStack.bottomAnchor.constraint(lessThanOrEqualTo: resultsContainer.bottomAnchor),
-        ])
-
-        scrollView.documentView = resultsContainer
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.drawsBackground = false
-        scrollView.automaticallyAdjustsContentInsets = false
 
         // Separator
         let separator = NSBox()
@@ -234,10 +218,9 @@ final class SidecarPanelView: NSView {
         topStack.spacing = 10
         topStack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 8, right: 12)
         topStack.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(topStack)
-        addSubview(scrollView)
+        addSubview(resultsStack)
         addSubview(logSeparator)
         addSubview(logLabel)
         addSubview(logScrollView)
@@ -250,13 +233,13 @@ final class SidecarPanelView: NSView {
             topStack.leadingAnchor.constraint(equalTo: leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            // Results area — takes upper portion
-            scrollView.topAnchor.constraint(equalTo: topStack.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            // Results area — fills space between topStack and log
+            resultsStack.topAnchor.constraint(equalTo: topStack.bottomAnchor, constant: 4),
+            resultsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            resultsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
 
             // Log separator + label
-            logSeparator.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 4),
+            logSeparator.topAnchor.constraint(equalTo: resultsStack.bottomAnchor, constant: 4),
             logSeparator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             logSeparator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
 
@@ -270,16 +253,11 @@ final class SidecarPanelView: NSView {
             logScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             logScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
 
-            // Split: results get ~60%, log gets rest
-            scrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.5, constant: -60),
-
             terminalSelector.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             grabButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             inputRow.leadingAnchor.constraint(equalTo: topStack.leadingAnchor, constant: 12),
             inputRow.trailingAnchor.constraint(equalTo: topStack.trailingAnchor, constant: -12),
             sendButton.widthAnchor.constraint(equalToConstant: 32),
-
-            resultsContainer.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
     }
 }
@@ -347,6 +325,7 @@ final class ReviewResultSection {
     private let headerButton: NSButton
     private let usageLabel: NSTextField
     private let textScrollView: NSScrollView
+    private let placeholderText = "Debug placeholder: result view is rendering"
 
     init(displayName: String) {
         headerButton = NSButton(title: "▾ \(displayName)", target: nil, action: nil)
@@ -364,28 +343,35 @@ final class ReviewResultSection {
         sectionSeparator.boxType = .separator
         sectionSeparator.translatesAutoresizingMaskIntoConstraints = false
 
-        // Text view inside its own scroll view for independent scrolling
+        // Each agent owns its own scrollable result body. Keep the recipe minimal:
+        // a plain NSTextView inside a plain NSScrollView, with no layer-backed
+        // decoration and no extra container tricks.
         textView = NSTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = false
         textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        textView.textColor = .textColor
-        textView.backgroundColor = .controlBackgroundColor
+        textView.textColor = .labelColor
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.textContainerInset = NSSize(width: 6, height: 6)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.lineFragmentPadding = 6
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.lineFragmentPadding = 4
 
         textScrollView = NSScrollView()
         textScrollView.documentView = textView
         textScrollView.hasVerticalScroller = true
         textScrollView.hasHorizontalScroller = false
-        textScrollView.drawsBackground = true
-        textScrollView.backgroundColor = .controlBackgroundColor
+        textScrollView.autohidesScrollers = true
+        textScrollView.drawsBackground = false
         textScrollView.translatesAutoresizingMaskIntoConstraints = false
-        textScrollView.wantsLayer = true
-        textScrollView.layer?.cornerRadius = 6
 
         // Container view
         let container = NSView()
@@ -411,6 +397,8 @@ final class ReviewResultSection {
             textScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             textScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             textScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            textScrollView.heightAnchor.constraint(equalToConstant: 180),
+            container.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
         ])
 
         view = container
@@ -418,19 +406,35 @@ final class ReviewResultSection {
 
     /// Append streaming text delta.
     func appendText(_ text: String) {
+        if textView.string == placeholderText {
+            textView.string = ""
+            textView.textColor = .labelColor
+        }
         textView.textStorage?.append(NSAttributedString(
             string: text,
             attributes: [
                 .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                .foregroundColor: NSColor.textColor,
+                .foregroundColor: NSColor.labelColor,
             ]
         ))
-        textView.scrollToEndOfDocument(nil)
+        if let textContainer = textView.textContainer,
+           let layoutManager = textView.layoutManager {
+            layoutManager.ensureLayout(for: textContainer)
+        }
+        let endRange = NSRange(location: (textView.string as NSString).length, length: 0)
+        textView.scrollRangeToVisible(endRange)
     }
 
     /// Clear content for new review.
     func clear() {
-        textView.string = ""
+        textView.textStorage?.setAttributedString(NSAttributedString(
+            string: placeholderText,
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        ))
+        textView.textColor = .secondaryLabelColor
         usageLabel.stringValue = ""
         let base = headerButton.title.components(separatedBy: " (").first ?? headerButton.title
         headerButton.title = base
@@ -446,4 +450,8 @@ final class ReviewResultSection {
     func setError(_ message: String) {
         appendText("\n⚠️ Error: \(message)\n")
     }
+}
+
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
