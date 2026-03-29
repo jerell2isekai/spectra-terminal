@@ -310,16 +310,6 @@ class SplitViewController: NSViewController {
         }
     }
 
-    /// Open an Agents Supervisor tab in the focused pane.
-    func openSupervisorTab() {
-        guard let ptc = focusedPane else { return }
-        let supervisor = SupervisorController()
-        ptc.addCustomTab(supervisor)
-        focusedTerminal = nil
-        focusedPane = ptc
-        supervisor.focus()
-    }
-
     /// Add a new tab to the focused pane.
     func newPaneTab() {
         guard focusedTerminal != nil,
