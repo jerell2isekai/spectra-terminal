@@ -315,6 +315,7 @@ class TerminalSurface: NSView, NSTextInputClient {
 
         menu.addItem(.separator())
         menu.addItem(item("Toggle Sidebar", #selector(contextToggleSidebar(_:)), symbol: "sidebar.left"))
+        menu.addItem(item("Toggle Agent Sidecar", #selector(contextToggleSidecar(_:)), symbol: "sidebar.right"))
 
         menu.addItem(.separator())
         menu.addItem(item("Save Layout…", #selector(contextSaveLayout(_:)), symbol: "square.and.arrow.down"))
@@ -383,6 +384,11 @@ class TerminalSurface: NSView, NSTextInputClient {
     @objc private func contextToggleSidebar(_ sender: Any?) {
         guard let wc = window?.windowController as? MainWindowController else { return }
         wc.toggleSidebarAction(sender)
+    }
+
+    @objc private func contextToggleSidecar(_ sender: Any?) {
+        guard let wc = window?.windowController as? MainWindowController else { return }
+        wc.toggleSidecarAction(sender)
     }
 
     @objc private func contextSaveLayout(_ sender: Any?) {

@@ -7,21 +7,38 @@ class WorkspaceViewController: NSViewController {
 
     let sidebarVC: SidebarViewController
     let terminalContentVC: SplitViewController
+    let sidecarPanelController = SidecarPanelController()
 
     private var sidebarContainer: NSVisualEffectView!
     private(set) var sidebarWidthConstraint: NSLayoutConstraint!
     private var divider: DividerView!
     private(set) var currentOverlay: OverlayPanel?
 
+    // Right sidecar panel
+    private var sidecarContainer: NSVisualEffectView!
+    private(set) var sidecarWidthConstraint: NSLayoutConstraint!
+    private var rightDivider: DividerView!
+
     /// The default sidebar width when first opened.
     static let defaultSidebarWidth: CGFloat = 220
     private static let minSidebarWidth: CGFloat = 150
     private static let maxSidebarWidth: CGFloat = 500
 
+    /// The default sidecar panel width.
+    static let defaultSidecarWidth: CGFloat = 320
+    private static let minSidecarWidth: CGFloat = 250
+    private static let maxSidecarWidth: CGFloat = 600
+
     /// The current sidebar width (persisted via UserDefaults).
     var sidebarWidth: CGFloat = {
         let saved = CGFloat(UserDefaults.standard.double(forKey: "sidebarWidth"))
         return saved >= minSidebarWidth ? saved : defaultSidebarWidth
+    }()
+
+    /// The current sidecar panel width (persisted via UserDefaults).
+    var sidecarWidth: CGFloat = {
+        let saved = CGFloat(UserDefaults.standard.double(forKey: "sidecarWidth"))
+        return saved >= minSidecarWidth ? saved : defaultSidecarWidth
     }()
 
     init(sidebarVC: SidebarViewController, terminalContentVC: SplitViewController) {
@@ -64,31 +81,68 @@ class WorkspaceViewController: NSViewController {
         terminalContentVC.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(terminalContentVC.view)
 
+        // Right sidecar panel — mirrors left sidebar pattern
+        rightDivider = DividerView()
+        rightDivider.translatesAutoresizingMaskIntoConstraints = false
+        rightDivider.onDrag = { [weak self] deltaX in self?.handleSidecarDividerDrag(deltaX) }
+        view.addSubview(rightDivider)
+
+        sidecarContainer = NSVisualEffectView()
+        sidecarContainer.material = .sidebar
+        sidecarContainer.blendingMode = .behindWindow
+        sidecarContainer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(sidecarContainer)
+
+        // Embed sidecar panel
+        sidecarPanelController.panelView.translatesAutoresizingMaskIntoConstraints = false
+        sidecarContainer.addSubview(sidecarPanelController.panelView)
+        NSLayoutConstraint.activate([
+            sidecarPanelController.panelView.topAnchor.constraint(equalTo: sidecarContainer.topAnchor),
+            sidecarPanelController.panelView.bottomAnchor.constraint(equalTo: sidecarContainer.bottomAnchor),
+            sidecarPanelController.panelView.leadingAnchor.constraint(equalTo: sidecarContainer.leadingAnchor),
+            sidecarPanelController.panelView.trailingAnchor.constraint(equalTo: sidecarContainer.trailingAnchor),
+        ])
+
         // Layout constraints
         sidebarWidthConstraint = sidebarContainer.widthAnchor.constraint(equalToConstant: 0)
+        sidecarWidthConstraint = sidecarContainer.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            // Sidebar
+            // Left sidebar
             sidebarContainer.topAnchor.constraint(equalTo: view.topAnchor),
             sidebarContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             sidebarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sidebarWidthConstraint,
 
-            // Divider — 6px wide for easy grab, visually thin via layer
+            // Left divider — 6px wide for easy grab, visually thin via layer
             divider.topAnchor.constraint(equalTo: view.topAnchor),
             divider.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             divider.leadingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
             divider.widthAnchor.constraint(equalToConstant: 6),
 
-            // Terminal content
+            // Terminal content — between left divider and right divider
             terminalContentVC.view.topAnchor.constraint(equalTo: view.topAnchor),
             terminalContentVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             terminalContentVC.view.leadingAnchor.constraint(equalTo: divider.trailingAnchor),
-            terminalContentVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            terminalContentVC.view.trailingAnchor.constraint(equalTo: rightDivider.leadingAnchor),
+
+            // Right divider
+            rightDivider.topAnchor.constraint(equalTo: view.topAnchor),
+            rightDivider.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            rightDivider.widthAnchor.constraint(equalToConstant: 6),
+
+            // Right sidecar container
+            sidecarContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            sidecarContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            sidecarContainer.leadingAnchor.constraint(equalTo: rightDivider.trailingAnchor),
+            sidecarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sidecarWidthConstraint,
         ])
 
-        // Start collapsed
+        // Start both sidebars collapsed
         sidebarContainer.isHidden = true
         divider.isHidden = true
+        sidecarContainer.isHidden = true
+        rightDivider.isHidden = true
     }
 
     // MARK: - Overlay
@@ -132,10 +186,30 @@ class WorkspaceViewController: NSViewController {
         UserDefaults.standard.set(Double(newWidth), forKey: "sidebarWidth")
     }
 
+    // MARK: - Sidecar Divider Drag
+
+    private func handleSidecarDividerDrag(_ deltaX: CGFloat) {
+        guard !isSidecarCollapsed else { return }
+
+        // Dragging left = increase sidecar width (deltaX is negative)
+        let newWidth = (sidecarWidthConstraint.constant - deltaX)
+            .clamped(to: Self.minSidecarWidth...Self.maxSidecarWidth)
+
+        guard abs(newWidth - sidecarWidthConstraint.constant) > 0.5 else { return }
+
+        sidecarWidthConstraint.constant = newWidth
+        sidecarWidth = newWidth
+        UserDefaults.standard.set(Double(newWidth), forKey: "sidecarWidth")
+    }
+
     // MARK: - Public API
 
     var isSidebarCollapsed: Bool {
         sidebarContainer.isHidden
+    }
+
+    var isSidecarCollapsed: Bool {
+        sidecarContainer.isHidden
     }
 
     /// Set sidebar visibility without changing the window frame.
@@ -169,6 +243,41 @@ class WorkspaceViewController: NSViewController {
                 }
             } else {
                 sidebarWidthConstraint.constant = sidebarWidth
+            }
+        }
+    }
+
+    /// Set sidecar panel visibility without changing the window frame.
+    /// For outset behavior, the caller (MainWindowController) handles window frame adjustments.
+    func setSidecarCollapsed(_ collapsed: Bool, animated: Bool = true) {
+        if collapsed {
+            if animated {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.2
+                    context.allowsImplicitAnimation = true
+                    self.sidecarWidthConstraint.constant = 0
+                    self.view.layoutSubtreeIfNeeded()
+                }, completionHandler: {
+                    self.sidecarContainer.isHidden = true
+                    self.rightDivider.isHidden = true
+                })
+            } else {
+                sidecarWidthConstraint.constant = 0
+                sidecarContainer.isHidden = true
+                rightDivider.isHidden = true
+            }
+        } else {
+            sidecarContainer.isHidden = false
+            rightDivider.isHidden = false
+            if animated {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.2
+                    context.allowsImplicitAnimation = true
+                    self.sidecarWidthConstraint.constant = self.sidecarWidth
+                    self.view.layoutSubtreeIfNeeded()
+                }
+            } else {
+                sidecarWidthConstraint.constant = sidecarWidth
             }
         }
     }
