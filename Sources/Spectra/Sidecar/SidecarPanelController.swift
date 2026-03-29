@@ -28,13 +28,16 @@ final class SidecarPanelController: NSObject {
 
     // MARK: - Private State
 
-    private var sessions: [PiRPCSession] = []
+    private var sessions: [PiRPCSession?]
     private var models: [ReviewModelConfig]
+    private var enabledFlags: [Bool]
+    private var isReviewActive = false
     private weak var targetTerminal: TerminalController?
     private var currentSnapshot: ReviewSnapshot?
     private var reviewStartTimes: [Int: Date] = [:]
     private let piPath: String
     private let systemPrompt: String
+    private static let enabledModelsKey = "sidecarEnabledModels"
     private var consentGiven: Bool {
         get { UserDefaults.standard.bool(forKey: "sidecarConsentGiven") }
         set { UserDefaults.standard.set(newValue, forKey: "sidecarConsentGiven") }
@@ -61,14 +64,23 @@ final class SidecarPanelController: NSObject {
 
     init(models: [ReviewModelConfig]? = nil, piPath: String? = nil, systemPrompt: String? = nil) {
         let config = Self.loadConfig()
-        self.models = (models ?? config?.models ?? Self.defaultModels)
-            .filter(\.enabled)
+        self.models = models ?? config?.models ?? Self.defaultModels
         self.piPath = piPath ?? config?.piPath ?? PiBinaryResolver.resolve() ?? ""
         self.systemPrompt = systemPrompt ?? config?.systemPrompt ?? Self.defaultSystemPrompt
 
+        // Read enabled flags: UserDefaults > config > default (all enabled)
+        let saved = UserDefaults.standard.dictionary(forKey: Self.enabledModelsKey) as? [String: Bool] ?? [:]
+        self.enabledFlags = self.models.map { saved[$0.modelFlag] ?? $0.enabled }
+        self.sessions = Array(repeating: nil, count: self.models.count)
+
         super.init()
 
-        panelView.configureModels(self.models.map { ($0.modelFlag, $0.displayName) })
+        panelView.configureModels(self.models.enumerated().map {
+            ($0.element.modelFlag, $0.element.displayName, enabledFlags[$0.offset])
+        })
+        panelView.onModelToggle = { [weak self] index, enabled in
+            self?.toggleModel(at: index, enabled: enabled)
+        }
         panelView.appendLog("Sidecar init: piPath=\(self.piPath.isEmpty ? "(empty)" : self.piPath)")
         panelView.appendLog("Models: \(self.models.map(\.displayName).joined(separator: ", "))")
         panelView.grabButton.target = self
@@ -79,7 +91,7 @@ final class SidecarPanelController: NSObject {
         panelView.injectButton.action = #selector(injectAction)
         panelView.inputField.delegate = self
 
-        // Eagerly spawn Pi sessions
+        // Eagerly spawn Pi sessions for enabled models
         if !self.piPath.isEmpty {
             spawnSessions()
         }
@@ -166,8 +178,13 @@ final class SidecarPanelController: NSObject {
         sendUserInstruction()
     }
 
-    /// Send captured context + user instruction to all Pi agents.
+    /// Send captured context + user instruction to all enabled Pi agents.
     func sendUserInstruction() {
+        guard enabledFlags.contains(true) else {
+            log("ERROR: no models enabled")
+            showAlert("No models enabled", "Enable at least one model to begin review.")
+            return
+        }
         guard let snapshot = currentSnapshot else {
             log("ERROR: no captured context — press Grab Context first")
             return
@@ -177,6 +194,9 @@ final class SidecarPanelController: NSObject {
             showAlert("Pi not found", "Install Pi coding agent and restart Spectra.")
             return
         }
+
+        isReviewActive = true
+        panelView.setToggleEnabled(false)
 
         let userText = panelView.inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let instruction = userText.isEmpty
@@ -197,15 +217,16 @@ final class SidecarPanelController: NSObject {
 
         // Abort previous
         for session in sessions {
-            if session.status == .busy || session.status == .aborting {
-                session.abort()
+            if let s = session, s.status == .busy || s.status == .aborting {
+                s.abort()
             }
         }
 
-        if sessions.isEmpty { spawnSessions() }
+        if sessions.allSatisfy({ $0 == nil }) { spawnSessions() }
 
-        // Clear results
+        // Clear results for enabled models
         for (i, section) in panelView.resultSections.enumerated() {
+            guard enabledFlags[i] else { continue }
             section.clear()
             panelView.setModelStatus(i, status: .connecting)
         }
@@ -220,10 +241,11 @@ final class SidecarPanelController: NSObject {
         sendPromptsWhenReady(text: fullPrompt)
     }
 
-    /// Send prompts to all sessions, waiting for any that are still starting or aborting.
+    /// Send prompts to all enabled sessions, waiting for any that are still starting or aborting.
     private func sendPromptsWhenReady(text: String, attempt: Int = 0) {
         var allReady = true
         for (i, session) in sessions.enumerated() {
+            guard let session else { continue }
             if session.status == .starting || session.status == .aborting {
                 allReady = false
                 continue
@@ -250,6 +272,7 @@ final class SidecarPanelController: NSObject {
         } else if !allReady {
             // Timeout — mark remaining starting sessions as error
             for (i, session) in sessions.enumerated() {
+                guard let session else { continue }
                 if session.status == .starting {
                     log("  [\(session.displayName)] timed out waiting for ready")
                     panelView.setModelStatus(i, status: .error("startup timeout"))
@@ -260,20 +283,20 @@ final class SidecarPanelController: NSObject {
     }
 
     private func sendPromptToSession(_ i: Int, text: String) {
-        guard i < sessions.count, sessions[i].status == .ready else { return }
+        guard i < sessions.count, let session = sessions[i], session.status == .ready else { return }
         // Don't send twice
         if reviewStartTimes[i] != nil { return }
 
         reviewStartTimes[i] = Date()
         panelView.setModelStatus(i, status: .streaming)
-        log("  [\(sessions[i].displayName)] sending prompt (\(text.count) chars)")
+        log("  [\(session.displayName)] sending prompt (\(text.count) chars)")
 
-        let stream = sessions[i].prompt(text)
+        let stream = session.prompt(text)
         Task { @MainActor in
             for await event in stream {
                 self.handleStreamEvent(event, modelIndex: i)
             }
-            self.log("  [\(self.sessions[i].displayName)] stream ended")
+            self.log("  [\(self.sessions[i]?.displayName ?? "?")] stream ended")
         }
     }
 
@@ -330,7 +353,7 @@ final class SidecarPanelController: NSObject {
 
     func shutdown() {
         for session in sessions {
-            session.stop()
+            session?.stop()
         }
         sessions.removeAll()
     }
@@ -340,7 +363,7 @@ final class SidecarPanelController: NSObject {
     @MainActor
     private func handleStreamEvent(_ event: PiRPCEvent, modelIndex i: Int) {
         guard i < panelView.resultSections.count else { return }
-        let name = i < sessions.count ? sessions[i].displayName : "?"
+        let name = (i < sessions.count ? sessions[i]?.displayName : nil) ?? "?"
         let section = panelView.resultSections[i]
 
         switch event {
@@ -356,7 +379,7 @@ final class SidecarPanelController: NSObject {
             case .done(let reason):
                 log("  [\(name)] done (reason: \(reason))")
                 let elapsed = reviewStartTimes[i].map { Date().timeIntervalSince($0) } ?? 0
-                if let usage = sessions[i].lastUsage {
+                if let usage = sessions[i]?.lastUsage {
                     section.setUsage(usage, elapsed: elapsed)
                 }
                 panelView.setModelStatus(i, status: .done(seconds: elapsed))
@@ -396,7 +419,7 @@ final class SidecarPanelController: NSObject {
             log("  [\(name)] message_start (role: \(role))")
         case .messageEnd(let usage):
             log("  [\(name)] message_end (usage: \(usage.map { "in=\($0.inputTokens) out=\($0.outputTokens)" } ?? "nil"))")
-            if let usage { sessions[i].lastUsage = usage }
+            if let usage { sessions[i]?.lastUsage = usage }
 
         case .response(let cmd, let success, let error):
             log("  [\(name)] response: \(cmd) success=\(success) error=\(error ?? "nil")")
@@ -417,7 +440,9 @@ final class SidecarPanelController: NSObject {
     }
 
     private func checkAllDone() {
-        let allDone = sessions.allSatisfy { s in
+        let activeSessions = sessions.compactMap { $0 }
+        guard !activeSessions.isEmpty else { return }
+        let allDone = activeSessions.allSatisfy { s in
             s.status == .ready || {
                 if case .error = s.status { return true }
                 if s.status == .terminated { return true }
@@ -425,6 +450,8 @@ final class SidecarPanelController: NSObject {
             }()
         }
         if allDone {
+            isReviewActive = false
+            panelView.setToggleEnabled(true)
             panelView.injectButton.isEnabled = true
             panelView.inputField.isEnabled = true
             panelView.sendButton.isEnabled = true
@@ -435,36 +462,78 @@ final class SidecarPanelController: NSObject {
 
     // MARK: - Private: Session Management
 
+    /// Create a single PiRPCSession at the given index, wire callbacks, and start it.
+    /// Returns nil if spawn fails.
+    private func makeSession(at index: Int) -> PiRPCSession? {
+        let model = models[index]
+        log("  [\(index)] \(model.displayName) → \(model.modelFlag)")
+        let session = PiRPCSession(
+            modelFlag: model.modelFlag,
+            displayName: model.displayName,
+            piPath: piPath,
+            systemPrompt: systemPrompt
+        )
+        session.onStatusChange = { [weak self] status in
+            DispatchQueue.main.async {
+                self?.log("  [\(model.displayName)] status → \(status)")
+                self?.handleSessionStatusChange(index: index, status: status)
+            }
+        }
+        do {
+            try session.start()
+            log("  [\(model.displayName)] process started")
+            panelView.setModelStatus(index, status: .connecting)
+        } catch {
+            log("  [\(model.displayName)] SPAWN FAILED: \(error)")
+            panelView.setModelStatus(index, status: .error("spawn failed"))
+            panelView.resultSections[index].setError("Failed to start Pi: \(error)")
+            return nil
+        }
+        return session
+    }
+
     private func spawnSessions() {
-        log("Spawning \(models.count) Pi sessions...")
-        sessions = models.enumerated().map { (i, model) in
-            log("  [\(i)] \(model.displayName) → \(model.modelFlag)")
-            let session = PiRPCSession(
-                modelFlag: model.modelFlag,
-                displayName: model.displayName,
-                piPath: piPath,
-                systemPrompt: systemPrompt
-            )
-            session.onStatusChange = { [weak self] status in
-                DispatchQueue.main.async {
-                    self?.log("  [\(model.displayName)] status → \(status)")
-                    self?.handleSessionStatusChange(index: i, status: status)
-                }
+        log("Spawning Pi sessions for \(enabledFlags.filter { $0 }.count)/\(models.count) enabled models...")
+        sessions = models.indices.map { i in
+            guard enabledFlags[i] else {
+                panelView.setModelStatus(i, status: .unavailable)
+                return nil
             }
-            do {
-                try session.start()
-                log("  [\(model.displayName)] process started")
-                panelView.setModelStatus(i, status: .connecting)
-            } catch {
-                log("  [\(model.displayName)] SPAWN FAILED: \(error)")
-                panelView.setModelStatus(i, status: .error("spawn failed"))
-                panelView.resultSections[i].setError("Failed to start Pi: \(error)")
-            }
-            return session
+            return makeSession(at: i)
         }
     }
 
+    /// Toggle a model on or off at runtime.
+    func toggleModel(at index: Int, enabled: Bool) {
+        guard index < models.count else { return }
+        guard !isReviewActive else { return }
+
+        enabledFlags[index] = enabled
+        persistEnabledFlags()
+
+        if enabled {
+            sessions[index] = makeSession(at: index)
+            panelView.setModelEnabled(index, enabled: true)
+            // makeSession already sets .connecting or .error — no overwrite needed
+        } else {
+            sessions[index]?.stop()
+            sessions[index] = nil
+            panelView.setModelEnabled(index, enabled: false)
+            panelView.setModelStatus(index, status: .unavailable)
+        }
+        panelView.updateEqualHeightConstraints()
+    }
+
+    private func persistEnabledFlags() {
+        var dict: [String: Bool] = [:]
+        for (i, model) in models.enumerated() {
+            dict[model.modelFlag] = enabledFlags[i]
+        }
+        UserDefaults.standard.set(dict, forKey: Self.enabledModelsKey)
+    }
+
     private func handleSessionStatusChange(index: Int, status: PiRPCSession.Status) {
+        guard enabledFlags[index] else { return }
         switch status {
         case .ready:
             if panelView.resultSections[index].textView.string.isEmpty {
@@ -482,8 +551,8 @@ final class SidecarPanelController: NSObject {
     // MARK: - Private: Helpers
 
     private func getSelectedReviewText() -> String {
-        // Check each result section's text view for selection
-        for section in panelView.resultSections {
+        // Check each visible result section's text view for selection
+        for section in panelView.resultSections where !section.view.isHidden {
             let range = section.textView.selectedRange()
             if range.length > 0,
                let text = section.textView.string as NSString? {

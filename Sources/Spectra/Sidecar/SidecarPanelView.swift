@@ -24,6 +24,11 @@ final class SidecarPanelView: NSView {
     private var modelStatusViews: [ModelStatusView] = []
     private let resultsStack = NSStackView()
     private(set) var resultSections: [ReviewResultSection] = []
+    private var equalHeightConstraints: [NSLayoutConstraint] = []
+    private let emptyStatePlaceholder = NSTextField(labelWithString: "Enable at least one model to begin review")
+
+    /// Called when user toggles a model checkbox. Parameters: (index, enabled).
+    var onModelToggle: ((Int, Bool) -> Void)?
 
     // Debug log
     private let logTextView = NSTextView()
@@ -39,17 +44,29 @@ final class SidecarPanelView: NSView {
 
     // MARK: - Configuration
 
-    /// Configure model status indicators.
-    func configureModels(_ models: [(name: String, displayName: String)]) {
+    /// Configure model status indicators with initial enabled state.
+    func configureModels(_ models: [(name: String, displayName: String, enabled: Bool)]) {
         modelStatusViews.forEach { $0.removeFromSuperview() }
-        modelStatusViews = models.map { ModelStatusView(displayName: $0.displayName) }
+        modelStatusViews = models.enumerated().map { (i, m) in
+            let view = ModelStatusView(displayName: m.displayName, enabled: m.enabled)
+            view.onToggle = { [weak self] enabled in
+                self?.onModelToggle?(i, enabled)
+            }
+            return view
+        }
         modelStack.setViews(modelStatusViews, in: .leading)
 
         resultSections.forEach { $0.view.removeFromSuperview() }
         resultSections = models.map { ReviewResultSection(displayName: $0.displayName) }
+
+        // Hide disabled models' result sections
+        for (i, section) in resultSections.enumerated() {
+            section.view.isHidden = !models[i].enabled
+        }
+
         resultsStack.setViews(resultSections.map(\.view), in: .top)
 
-        // Each result section fills width and shares height equally
+        // Each result section fills width
         for section in resultSections {
             section.view.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
@@ -57,20 +74,52 @@ final class SidecarPanelView: NSView {
                 section.view.trailingAnchor.constraint(equalTo: resultsStack.trailingAnchor),
             ])
         }
-        // Equal heights for all sections
-        if resultSections.count > 1 {
-            for i in 1..<resultSections.count {
-                resultSections[i].view.heightAnchor.constraint(
-                    equalTo: resultSections[0].view.heightAnchor
-                ).isActive = true
-            }
-        }
+
+        updateEqualHeightConstraints()
     }
 
     /// Update model status indicator.
     func setModelStatus(_ index: Int, status: ModelStatusView.Status) {
         guard index < modelStatusViews.count else { return }
         modelStatusViews[index].status = status
+    }
+
+    /// Show/hide a model's result section.
+    func setModelEnabled(_ index: Int, enabled: Bool) {
+        guard index < resultSections.count else { return }
+        resultSections[index].view.isHidden = !enabled
+    }
+
+    /// Enable or disable all model toggle checkboxes (used during review).
+    func setToggleEnabled(_ enabled: Bool) {
+        for view in modelStatusViews {
+            view.setCheckboxEnabled(enabled)
+        }
+    }
+
+    /// Rebuild equal-height constraints for visible result sections only.
+    func updateEqualHeightConstraints() {
+        NSLayoutConstraint.deactivate(equalHeightConstraints)
+        equalHeightConstraints.removeAll()
+
+        let visibleSections = resultSections.filter { !$0.view.isHidden }
+
+        if visibleSections.isEmpty {
+            emptyStatePlaceholder.isHidden = false
+            resultsStack.isHidden = true
+        } else {
+            emptyStatePlaceholder.isHidden = true
+            resultsStack.isHidden = false
+            if visibleSections.count > 1 {
+                for i in 1..<visibleSections.count {
+                    let c = visibleSections[i].view.heightAnchor.constraint(
+                        equalTo: visibleSections[0].view.heightAnchor
+                    )
+                    equalHeightConstraints.append(c)
+                }
+                NSLayoutConstraint.activate(equalHeightConstraints)
+            }
+        }
     }
 
     /// Update terminal selector with available terminals.
@@ -179,6 +228,13 @@ final class SidecarPanelView: NSView {
         resultsStack.spacing = 8
         resultsStack.translatesAutoresizingMaskIntoConstraints = false
 
+        // Empty state placeholder (shown when all models are disabled)
+        emptyStatePlaceholder.font = .systemFont(ofSize: 12)
+        emptyStatePlaceholder.textColor = .tertiaryLabelColor
+        emptyStatePlaceholder.alignment = .center
+        emptyStatePlaceholder.isHidden = true
+        emptyStatePlaceholder.translatesAutoresizingMaskIntoConstraints = false
+
         // Separator
         let separator = NSBox()
         separator.boxType = .separator
@@ -221,6 +277,7 @@ final class SidecarPanelView: NSView {
 
         addSubview(topStack)
         addSubview(resultsStack)
+        addSubview(emptyStatePlaceholder)
         addSubview(logSeparator)
         addSubview(logLabel)
         addSubview(logScrollView)
@@ -238,8 +295,14 @@ final class SidecarPanelView: NSView {
             resultsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             resultsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
 
-            // Log separator + label
-            logSeparator.topAnchor.constraint(equalTo: resultsStack.bottomAnchor, constant: 4),
+            // Empty state placeholder — same position as resultsStack
+            emptyStatePlaceholder.topAnchor.constraint(equalTo: topStack.bottomAnchor, constant: 20),
+            emptyStatePlaceholder.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            emptyStatePlaceholder.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+
+            // Log separator + label — pinned below both resultsStack and emptyStatePlaceholder
+            logSeparator.topAnchor.constraint(greaterThanOrEqualTo: resultsStack.bottomAnchor, constant: 4),
+            logSeparator.topAnchor.constraint(greaterThanOrEqualTo: emptyStatePlaceholder.bottomAnchor, constant: 4),
             logSeparator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             logSeparator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
 
@@ -270,18 +333,27 @@ final class ModelStatusView: NSView {
     }
 
     var status: Status = .idle { didSet { updateDisplay() } }
+    private let checkbox: NSButton
+    var onToggle: ((Bool) -> Void)?
     private let dot = NSView(frame: NSRect(x: 0, y: 0, width: 8, height: 8))
     private let label: NSTextField
 
-    init(displayName: String) {
+    init(displayName: String, enabled: Bool = true) {
+        checkbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         label = NSTextField(labelWithString: displayName)
         super.init(frame: .zero)
+
+        checkbox.state = enabled ? .on : .off
+        checkbox.target = self
+        checkbox.action = #selector(checkboxToggled)
+        checkbox.controlSize = .small
+
         label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 4
         translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [dot, label])
+        let stack = NSStackView(views: [checkbox, dot, label])
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -297,6 +369,14 @@ final class ModelStatusView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func setCheckboxEnabled(_ enabled: Bool) {
+        checkbox.isEnabled = enabled
+    }
+
+    @objc private func checkboxToggled(_ sender: NSButton) {
+        onToggle?(sender.state == .on)
+    }
 
     private func updateDisplay() {
         switch status {
