@@ -28,5 +28,7 @@ TODO.md
 !Sources/Spectra/Resources/Guides/CLAUDE.md
 .claude/
 release/
+entitlements.plist
+scripts/build-release.sh
 /supervisor/
 website/
