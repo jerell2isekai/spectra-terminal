@@ -1,3 +1,4 @@
+#if ENABLE_SIDECAR
 import Foundation
 import GhosttyKit
 
@@ -49,3 +50,4 @@ enum TerminalBufferReader {
         return sanitized
     }
 }
+#endif

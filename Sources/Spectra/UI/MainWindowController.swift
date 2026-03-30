@@ -52,6 +52,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
 
+        #if ENABLE_SIDECAR
         // Restore sidecar panel state
         let sidecarWasOpen = UserDefaults.standard.bool(forKey: "sidecarOpen")
         if sidecarWasOpen {
@@ -64,6 +65,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             }
             window.setFrame(frame, display: false)
         }
+        #endif
 
         // Create initial surface after view is in hierarchy
         if let app = bridge.app {
@@ -76,12 +78,16 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.window?.performClose(nil)
         }
         splitVC.onFocusChange = { [weak self] _ in
+            #if ENABLE_SIDECAR
             guard let self, self.isSidecarOpen else { return }
             self.updateSidecarTarget()
+            #endif
         }
         splitVC.onTerminalInventoryChange = { [weak self] in
+            #if ENABLE_SIDECAR
             guard let self, self.isSidecarOpen else { return }
             self.updateSidecarTarget()
+            #endif
         }
 
         // Notifications
@@ -206,6 +212,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    #if ENABLE_SIDECAR
     // MARK: - Sidecar Panel Actions
 
     /// Whether the sidecar panel is currently open.
@@ -274,6 +281,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
         sidecar.updateTerminalList(terminals, preferredTarget: splitVC.focusedTerminal)
     }
+    #endif
 
     // MARK: - Notifications
 
@@ -292,12 +300,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let terminalSurface = $0.surface.surface else { return false }
             return terminalSurface == notifSurface
         }
+        #if ENABLE_SIDECAR
         if isSidecarOpen && ownsChangedSurface {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.isSidecarOpen else { return }
                 self.updateSidecarTarget()
             }
         }
+        #endif
     }
 
     @objc private func handleConfigChange(_ notification: Notification) {
@@ -352,7 +362,9 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         sidebarVC.setGitRefreshWindowFocused(true)
+        #if ENABLE_SIDECAR
         if isSidecarOpen { updateSidecarTarget() }
+        #endif
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -362,7 +374,9 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         sidebarVC.setGitRefreshWindowFocused(false)
         sidebarVC.stopGitAutoRefreshMonitoring()
+        #if ENABLE_SIDECAR
         workspaceVC.sidecarPanelController.shutdown()
+        #endif
         for ptc in splitVC.allPanes() {
             ptc.detachAll()
         }

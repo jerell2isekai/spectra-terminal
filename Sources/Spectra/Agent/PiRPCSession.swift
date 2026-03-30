@@ -1,3 +1,4 @@
+#if ENABLE_SIDECAR
 import Foundation
 
 /// Manages a single Pi RPC subprocess for review-only LLM interaction.
@@ -435,3 +436,4 @@ enum PiBinaryResolver {
         return nil
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if ENABLE_SIDECAR
 import AppKit
 import GhosttyKit
 
@@ -688,3 +689,4 @@ extension SidecarPanelController {
         )
     }
 }
+#endif

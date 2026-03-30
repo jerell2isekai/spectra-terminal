@@ -1,3 +1,4 @@
+#if ENABLE_SIDECAR
 import Foundation
 
 // MARK: - Commands (stdin → Pi)
@@ -198,3 +199,4 @@ enum PiRPCEventParser {
         )
     }
 }
+#endif

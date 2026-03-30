@@ -1,3 +1,4 @@
+#if ENABLE_SIDECAR
 import AppKit
 
 /// The visual layout for the Agent Sidecar Panel.
@@ -562,3 +563,4 @@ final class ReviewResultSection {
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
+#endif

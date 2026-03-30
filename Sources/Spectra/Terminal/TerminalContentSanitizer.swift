@@ -1,3 +1,4 @@
+#if ENABLE_SIDECAR
 import Foundation
 
 /// 4-stage sanitization pipeline for terminal content before sending to external LLMs.
@@ -141,3 +142,4 @@ enum TerminalContentSanitizer {
             + String(text[startIndex...])
     }
 }
+#endif

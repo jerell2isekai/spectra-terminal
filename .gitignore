@@ -29,6 +29,6 @@ TODO.md
 .claude/
 release/
 entitlements.plist
-scripts/build-release.sh
+scripts/
 /supervisor/
 website/
