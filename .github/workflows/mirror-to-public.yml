@@ -7,79 +7,17 @@ on:
 
 jobs:
   mirror:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout release-public
         uses: actions/checkout@v4
         with:
-          ref: release-public
-          fetch-depth: 1
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Delete private feature files
-        run: |
-          rm -rf Sources/Spectra/Sidecar/
-          rm -rf Sources/Spectra/Agent/
-          rm -f Sources/Spectra/Terminal/TerminalBufferReader.swift
-          rm -f Sources/Spectra/Terminal/TerminalContentSanitizer.swift
-          rm -rf scripts/
-
-      - name: Strip feature guards from integration files
-        run: |
-          for f in Sources/Spectra/UI/WorkspaceViewController.swift \
-                   Sources/Spectra/UI/MainWindowController.swift \
-                   Sources/Spectra/App/AppDelegate.swift \
-                   Sources/Spectra/Terminal/TerminalSurface.swift; do
-            [ -f "$f" ] || continue
-            awk '
-              /^[[:space:]]*#if ENABLE_SIDECAR/ { in_sidecar=1; skip=1; next }
-              in_sidecar && /^[[:space:]]*#else/  { skip=0; next }
-              in_sidecar && /^[[:space:]]*#endif/ { in_sidecar=0; skip=0; next }
-              !skip { print }
-            ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-          done
-
-      - name: Clean Package.swift
-        run: |
-          sed -i '' '/^import class Foundation\.ProcessInfo$/d' Package.swift
-          sed -i '' '/^var spectraSwiftSettings/,/^}$/d' Package.swift
-          sed -i '' '/swiftSettings: spectraSwiftSettings,$/d' Package.swift
-          swift package dump-package > /dev/null 2>&1
-
-      - name: Verify zero sidecar references
-        run: |
-          LEAKS=$(grep -rn -i \
-            -e 'ENABLE_SIDECAR' \
-            -e 'SidecarPanelController' -e 'SidecarPanelView' \
-            -e 'PiRPCSession' -e 'PiRPCTypes' -e 'PiRPCEvent' \
-            -e 'PiBinaryResolver' -e 'PiAssistantMessageEvent' -e 'PiTokenUsage' \
-            -e 'PiRPCEventParser' \
-            -e 'TerminalBufferReader' -e 'TerminalContentSanitizer' \
-            -e 'Toggle Agent Sidecar' \
-            -e 'sidecarOpen' -e 'sidecarWidth' \
-            -e 'sidecarEnabledModels' -e 'sidecarConsentGiven' \
-            -e 'toggleSidecarAction' -e 'contextToggleSidecar' \
-            -e 'updateSidecarTarget' -e 'handleSidecarDividerDrag' \
-            -e 'isSidecarOpen' -e 'isSidecarCollapsed' \
-            -e 'setSidecarOpen' -e 'setSidecarCollapsed' \
-            --include='*.swift' --include='*.yml' --include='*.yaml' \
-            --include='*.json' --include='*.md' --include='*.sh' \
-            --exclude='mirror-to-public.yml' \
-            Sources/ Package.swift .github/ 2>/dev/null || true)
-          if [ -n "$LEAKS" ]; then
-            echo "ERROR: Sidecar references found:"
-            echo "$LEAKS"
-            exit 1
-          fi
-          echo "Clean — zero sidecar references."
-
-      - name: Create sanitized orphan and push
+      - name: Push to spectra-terminal
         env:
           MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan sanitized-export
-          git add -A
-          git commit -m "Spectra $(date +%Y-%m-%d) sanitized export"
           git remote add public "https://x-access-token:${MIRROR_PAT}@github.com/jerell2isekai/spectra-terminal.git"
-          git push public sanitized-export:main --force
+          git push public release-public:main --force
