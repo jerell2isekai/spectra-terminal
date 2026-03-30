@@ -21,7 +21,7 @@ class AboutContentView: NSView {
         // App icon
         let iconView = NSImageView()
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+        if let iconURL = Bundle.spectraResources.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             iconView.image = icon
         } else {

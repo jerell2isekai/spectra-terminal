@@ -142,7 +142,7 @@ enum MarkdownPreviewSupport {
     }
 
     private static func loadBundledJS(_ name: String) -> String {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "js", subdirectory: "js"),
+        guard let url = Bundle.spectraResources.url(forResource: name, withExtension: "js", subdirectory: "js"),
               let data = try? Data(contentsOf: url),
               let str = String(data: data, encoding: .utf8) else {
             return "/* \(name).js not found in bundle */"

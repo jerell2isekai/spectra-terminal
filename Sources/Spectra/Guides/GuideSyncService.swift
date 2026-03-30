@@ -105,7 +105,7 @@ final class GuideSyncService {
     }
 
     private func loadDefaultTemplate(_ kind: GuideTemplateKind) throws -> String {
-        guard let url = Bundle.module.url(forResource: kind.resourceName,
+        guard let url = Bundle.spectraResources.url(forResource: kind.resourceName,
                                           withExtension: kind.resourceExtension,
                                           subdirectory: "Guides") else {
             throw NSError(domain: "GuideSyncService", code: 1, userInfo: [
