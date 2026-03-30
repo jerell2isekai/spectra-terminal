@@ -1,0 +1,34 @@
+# Build artifacts
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+
+# libghostty build output (built from source, not committed)
+lib/
+include/ghostty*
+include/module.modulemap
+
+# Icon intermediate artifacts (regenerate with: iconutil -c icns assets/AppIcon.iconset)
+assets/AppIcon.iconset/
+
+# macOS
+.DS_Store
+
+# IDE
+*.xcworkspace/xcuserdata/
+*.playground/
+
+# Claude Code
+AGENTS.md
+CLAUDE.md
+TODO.md
+!Sources/Spectra/Resources/Guides/
+!Sources/Spectra/Resources/Guides/AGENTS.md
+!Sources/Spectra/Resources/Guides/CLAUDE.md
+.claude/
+release/
+entitlements.plist
+scripts/
+/supervisor/
+website/
