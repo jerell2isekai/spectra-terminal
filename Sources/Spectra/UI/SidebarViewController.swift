@@ -1,35 +1,307 @@
 import AppKit
 
-/// Sidebar with two full-height panels: File Explorer and Source Control.
-/// Switched via a segmented tab bar in the header.
+// MARK: - Shared UI Fonts
+
+private func sidebarUIFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+    let psName: String
+    switch weight {
+    case .semibold, .bold, .medium: psName = "Sarasa-UI-TC-SemiBold"
+    case .light:                    psName = "Sarasa-UI-TC-Light"
+    default:                        psName = "Sarasa-UI-TC-Regular"
+    }
+    return NSFont(name: psName, size: size) ?? .systemFont(ofSize: size, weight: weight)
+}
+
+private func sidebarUIMonoFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+    let psName = weight == .bold || weight == .semibold
+        ? "Sarasa-Mono-TC-SemiBold" : "Sarasa-Mono-TC-Regular"
+    return NSFont(name: psName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: weight)
+}
+
+// MARK: - Constants
+
+private let activityBarWidth: CGFloat = 40
+
+// MARK: - SidebarPanel
+
+private enum SidebarPanel: Int, CaseIterable {
+    case files = 0
+    case git = 1
+
+    var iconName: String {
+        switch self {
+        case .files: return "doc.text"
+        case .git:   return "arrow.triangle.branch"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .files: return "FILES"
+        case .git:   return "SOURCE CONTROL"
+        }
+    }
+}
+
+// MARK: - ActivityBarView
+
+fileprivate protocol ActivityBarDelegate: AnyObject {
+    func activityBar(_ bar: ActivityBarView, didSelectPanel panel: SidebarPanel)
+}
+
+private class ActivityBarView: NSView {
+
+    weak var delegate: ActivityBarDelegate?
+
+    private let stack = NSStackView()
+    private var itemContainers: [SidebarPanel: NSView] = [:]
+    private var buttons: [SidebarPanel: NSButton] = [:]
+    private var badges: [SidebarPanel: NSTextField] = [:]
+    private var currentPanel: SidebarPanel = .files
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupUI()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func setupUI() {
+        translatesAutoresizingMaskIntoConstraints = false
+
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+
+        for panel in SidebarPanel.allCases {
+            let container = NSView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+
+            let button = NSButton()
+            button.bezelStyle = .toolbar
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.tag = panel.rawValue
+            button.target = self
+            button.action = #selector(itemClicked(_:))
+            button.translatesAutoresizingMaskIntoConstraints = false
+
+            if let image = NSImage(systemSymbolName: panel.iconName,
+                                   accessibilityDescription: panel.title) {
+                let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+                let configured = image.withSymbolConfiguration(config) ?? image
+                configured.isTemplate = true
+                button.image = configured
+            }
+
+            button.setAccessibilityRole(.radioButton)
+            button.setAccessibilityLabel(panel.title)
+
+            container.addSubview(button)
+
+            let badge = NSTextField(labelWithString: "")
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            badge.font = .monospacedSystemFont(ofSize: 9, weight: .bold)
+            badge.alignment = .center
+            badge.textColor = .white
+            badge.wantsLayer = true
+            badge.isHidden = true
+            container.addSubview(badge)
+
+            NSLayoutConstraint.activate([
+                container.widthAnchor.constraint(equalToConstant: activityBarWidth),
+                container.heightAnchor.constraint(equalToConstant: 36),
+                button.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                button.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                button.widthAnchor.constraint(equalToConstant: 32),
+                button.heightAnchor.constraint(equalToConstant: 32),
+                badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 14),
+                badge.heightAnchor.constraint(equalToConstant: 14),
+                badge.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
+                badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 1),
+            ])
+
+            stack.addArrangedSubview(container)
+            itemContainers[panel] = container
+            buttons[panel] = button
+            badges[panel] = badge
+        }
+
+        updateHighlight()
+    }
+
+    @objc private func itemClicked(_ sender: NSButton) {
+        guard let panel = SidebarPanel(rawValue: sender.tag) else { return }
+        delegate?.activityBar(self, didSelectPanel: panel)
+    }
+
+    func setActivePanel(_ panel: SidebarPanel) {
+        currentPanel = panel
+        updateHighlight()
+    }
+
+    func setBadge(_ count: Int, for panel: SidebarPanel) {
+        guard let badge = badges[panel] else { return }
+        if count > 0 {
+            badge.stringValue = count > 99 ? "99+" : "\(count)"
+            badge.isHidden = false
+            badge.layer?.cornerRadius = 7
+            badge.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        } else {
+            badge.isHidden = true
+        }
+    }
+
+    private func updateHighlight() {
+        for panel in SidebarPanel.allCases {
+            let isActive = panel == currentPanel
+            buttons[panel]?.contentTintColor = isActive
+                ? .controlAccentColor
+                : .secondaryLabelColor
+            buttons[panel]?.setAccessibilityValue(isActive ? "1" : "0")
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        // 1px separator on the right edge
+        NSColor.separatorColor.setFill()
+        NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
+    }
+}
+
+// MARK: - PanelHeaderView
+
+private class PanelHeaderView: NSView {
+
+    var onOpenFolder: (() -> Void)?
+    var onToggleHiddenFiles: (() -> Void)?
+    var onRefresh: (() -> Void)?
+
+    private let titleLabel = NSTextField(labelWithString: "FILES")
+    private let rootLabel = NSTextField(labelWithString: "No Folder Open")
+    private let buttonStack = NSStackView()
+    private let openFolderButton: NSButton
+    private let showHiddenFilesButton: NSButton
+    private let refreshButton: NSButton
+
+    override init(frame frameRect: NSRect) {
+        openFolderButton = NSButton(
+            image: NSImage(systemSymbolName: "folder.badge.plus",
+                           accessibilityDescription: "Open Folder")!,
+            target: nil, action: nil)
+        showHiddenFilesButton = NSButton(
+            image: NSImage(systemSymbolName: "eye.slash",
+                           accessibilityDescription: "Show Hidden Files")!,
+            target: nil, action: nil)
+        refreshButton = NSButton(
+            image: NSImage(systemSymbolName: "arrow.clockwise",
+                           accessibilityDescription: "Refresh")!,
+            target: nil, action: nil)
+
+        super.init(frame: frameRect)
+
+        openFolderButton.target = self
+        openFolderButton.action = #selector(openFolderClicked)
+        showHiddenFilesButton.target = self
+        showHiddenFilesButton.action = #selector(toggleHiddenClicked)
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshClicked)
+
+        setupUI()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func setupUI() {
+        translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = sidebarUIFont(ofSize: 10, weight: .semibold)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(titleLabel)
+
+        rootLabel.translatesAutoresizingMaskIntoConstraints = false
+        rootLabel.font = sidebarUIFont(ofSize: 10)
+        rootLabel.textColor = .tertiaryLabelColor
+        rootLabel.lineBreakMode = .byTruncatingMiddle
+        rootLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(rootLabel)
+
+        for btn in [openFolderButton, showHiddenFilesButton, refreshButton] {
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.bezelStyle = .accessoryBarAction
+            btn.controlSize = .small
+            btn.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        }
+        openFolderButton.toolTip = "Open Folder"
+        refreshButton.toolTip = "Refresh"
+
+        buttonStack.orientation = .horizontal
+        buttonStack.spacing = 2
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonStack.setHuggingPriority(.defaultHigh, for: .horizontal)
+        buttonStack.addArrangedSubview(openFolderButton)
+        buttonStack.addArrangedSubview(showHiddenFilesButton)
+        buttonStack.addArrangedSubview(refreshButton)
+        addSubview(buttonStack)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 28),
+
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            rootLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
+            rootLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            buttonStack.leadingAnchor.constraint(greaterThanOrEqualTo: rootLabel.trailingAnchor, constant: 4),
+            buttonStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            buttonStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    func setPanel(_ panel: SidebarPanel) {
+        titleLabel.stringValue = panel.title
+        showHiddenFilesButton.isHidden = panel != .files
+    }
+
+    func setRootName(_ name: String) {
+        rootLabel.stringValue = name
+    }
+
+    func updateHiddenFilesIcon(showing: Bool) {
+        let symbolName = showing ? "eye" : "eye.slash"
+        let desc = showing ? "Hide Hidden Files" : "Show Hidden Files"
+        showHiddenFilesButton.image = NSImage(systemSymbolName: symbolName,
+                                              accessibilityDescription: desc)
+        showHiddenFilesButton.toolTip = desc
+    }
+
+    @objc private func openFolderClicked() { onOpenFolder?() }
+    @objc private func toggleHiddenClicked() { onToggleHiddenFiles?() }
+    @objc private func refreshClicked() { onRefresh?() }
+}
+
+// MARK: - SidebarViewController
+
+/// Sidebar with VS Code-style activity bar (icon strip) and switchable panels.
 class SidebarViewController: NSViewController {
 
-    // MARK: - UI Font
-
-    /// Preferred UI font with CJK support, falling back to system font.
-    private static func uiFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
-        let psName: String
-        switch weight {
-        case .semibold, .bold, .medium: psName = "Sarasa-UI-TC-SemiBold"
-        case .light:                    psName = "Sarasa-UI-TC-Light"
-        default:               psName = "Sarasa-UI-TC-Regular"
-        }
-        return NSFont(name: psName, size: size) ?? .systemFont(ofSize: size, weight: weight)
-    }
-
-    private static func uiMonoFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
-        let psName = weight == .bold || weight == .semibold
-            ? "Sarasa-Mono-TC-SemiBold" : "Sarasa-Mono-TC-Regular"
-        return NSFont(name: psName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: weight)
-    }
-
-    // MARK: - Tab bar
-    private var tabBar: NSSegmentedControl!
-    private var openFolderButton: NSButton!
-    private var showHiddenFilesButton: NSButton!
-    private var refreshButton: NSButton!
-    private var headerView: NSView!
-    private var rootLabel: NSTextField!
+    // MARK: - Layout Components
+    private var activityBar: ActivityBarView!
+    private var panelHeader: PanelHeaderView!
 
     // MARK: - File Tree
     private var outlineView: NSOutlineView!
@@ -41,6 +313,7 @@ class SidebarViewController: NSViewController {
     private var gitScrollView: NSScrollView!
 
     // MARK: - State
+    private var activePanel: SidebarPanel = .files
     private var rootNode: FileNode?
     private(set) var rootURL: URL?
     private var showsHiddenFiles: Bool = UserDefaults.standard.bool(forKey: "sidebarShowHiddenFiles")
@@ -67,127 +340,66 @@ class SidebarViewController: NSViewController {
     override func loadView() {
         let container = NSView()
 
-        buildHeader()
+        activityBar = ActivityBarView()
+        activityBar.delegate = self
+
+        panelHeader = PanelHeaderView()
+        panelHeader.onOpenFolder = { [weak self] in self?.openFolder(nil) }
+        panelHeader.onToggleHiddenFiles = { [weak self] in self?.toggleShowHiddenFiles(nil) }
+        panelHeader.onRefresh = { [weak self] in self?.refreshTree(nil) }
+        panelHeader.updateHiddenFilesIcon(showing: showsHiddenFiles)
+
         buildFileTree()
         buildGitPanel()
 
-        container.addSubview(headerView)
-        container.addSubview(fileTreeScrollView)
-        container.addSubview(gitScrollView)
+        // Panel area container
+        let panelArea = NSView()
+        panelArea.translatesAutoresizingMaskIntoConstraints = false
+        panelArea.addSubview(panelHeader)
+        panelArea.addSubview(fileTreeScrollView)
+        panelArea.addSubview(gitScrollView)
+
+        container.addSubview(activityBar)
+        container.addSubview(panelArea)
 
         let safeArea = container.safeAreaLayoutGuide
 
         NSLayoutConstraint.activate([
-            // Header (tab bar + buttons)
-            headerView.topAnchor.constraint(equalTo: safeArea.topAnchor),
-            headerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            // Activity bar — left side, full height
+            activityBar.topAnchor.constraint(equalTo: safeArea.topAnchor),
+            activityBar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            activityBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            activityBar.widthAnchor.constraint(equalToConstant: activityBarWidth),
 
-            // File tree — full height below header
-            fileTreeScrollView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            fileTreeScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            fileTreeScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            fileTreeScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // Panel area — right of activity bar
+            panelArea.topAnchor.constraint(equalTo: safeArea.topAnchor),
+            panelArea.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            panelArea.leadingAnchor.constraint(equalTo: activityBar.trailingAnchor),
+            panelArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            // Git panel — full height below header (same position, toggled via isHidden)
-            gitScrollView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            gitScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            gitScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            gitScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // Panel header — top of panel area
+            panelHeader.topAnchor.constraint(equalTo: panelArea.topAnchor),
+            panelHeader.leadingAnchor.constraint(equalTo: panelArea.leadingAnchor),
+            panelHeader.trailingAnchor.constraint(equalTo: panelArea.trailingAnchor),
+
+            // File tree — below header
+            fileTreeScrollView.topAnchor.constraint(equalTo: panelHeader.bottomAnchor),
+            fileTreeScrollView.leadingAnchor.constraint(equalTo: panelArea.leadingAnchor),
+            fileTreeScrollView.trailingAnchor.constraint(equalTo: panelArea.trailingAnchor),
+            fileTreeScrollView.bottomAnchor.constraint(equalTo: panelArea.bottomAnchor),
+
+            // Git panel — same position, toggled via isHidden
+            gitScrollView.topAnchor.constraint(equalTo: panelHeader.bottomAnchor),
+            gitScrollView.leadingAnchor.constraint(equalTo: panelArea.leadingAnchor),
+            gitScrollView.trailingAnchor.constraint(equalTo: panelArea.trailingAnchor),
+            gitScrollView.bottomAnchor.constraint(equalTo: panelArea.bottomAnchor),
         ])
 
         // Start on Files tab
         gitScrollView.isHidden = true
+        panelHeader.setPanel(.files)
 
         self.view = container
-    }
-
-    // MARK: - Build Header (tab bar + action buttons)
-
-    private func buildHeader() {
-        headerView = NSView()
-        headerView.translatesAutoresizingMaskIntoConstraints = false
-
-        // Segmented tab bar
-        tabBar = NSSegmentedControl(labels: ["Files", "Git"], trackingMode: .selectOne, target: self, action: #selector(tabChanged(_:)))
-        tabBar.translatesAutoresizingMaskIntoConstraints = false
-        tabBar.selectedSegment = 0
-        tabBar.segmentStyle = .capsule
-        tabBar.controlSize = .small
-        // Set SF Symbol images
-        tabBar.setImage(NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Files"), forSegment: 0)
-        tabBar.setImage(NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Git"), forSegment: 1)
-        tabBar.setWidth(0, forSegment: 0) // auto-size
-        tabBar.setWidth(0, forSegment: 1)
-
-        // Folder name label (shows below tab bar area, reuses rootLabel)
-        rootLabel = NSTextField(labelWithString: "No Folder Open")
-        rootLabel.translatesAutoresizingMaskIntoConstraints = false
-        rootLabel.font = Self.uiFont(ofSize: 11, weight: .medium)
-        rootLabel.textColor = .tertiaryLabelColor
-        rootLabel.lineBreakMode = .byTruncatingMiddle
-        rootLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        openFolderButton = NSButton(
-            image: NSImage(systemSymbolName: "folder.badge.plus",
-                           accessibilityDescription: "Open Folder")!,
-            target: self,
-            action: #selector(openFolder(_:))
-        )
-        openFolderButton.translatesAutoresizingMaskIntoConstraints = false
-        openFolderButton.bezelStyle = .accessoryBarAction
-        openFolderButton.toolTip = "Open Folder"
-        openFolderButton.controlSize = .small
-
-        showHiddenFilesButton = NSButton(
-            image: NSImage(systemSymbolName: "eye.slash",
-                           accessibilityDescription: "Show Hidden Files")!,
-            target: self,
-            action: #selector(toggleShowHiddenFiles(_:))
-        )
-        showHiddenFilesButton.translatesAutoresizingMaskIntoConstraints = false
-        showHiddenFilesButton.bezelStyle = .accessoryBarAction
-        showHiddenFilesButton.controlSize = .small
-
-        refreshButton = NSButton(
-            image: NSImage(systemSymbolName: "arrow.clockwise",
-                           accessibilityDescription: "Refresh")!,
-            target: self,
-            action: #selector(refreshTree(_:))
-        )
-        refreshButton.translatesAutoresizingMaskIntoConstraints = false
-        refreshButton.bezelStyle = .accessoryBarAction
-        refreshButton.toolTip = "Refresh"
-        refreshButton.controlSize = .small
-
-        headerView.addSubview(tabBar)
-        headerView.addSubview(rootLabel)
-        headerView.addSubview(openFolderButton)
-        headerView.addSubview(showHiddenFilesButton)
-        headerView.addSubview(refreshButton)
-
-        updateShowHiddenFilesButton()
-
-        NSLayoutConstraint.activate([
-            headerView.heightAnchor.constraint(equalToConstant: 48),
-
-            // Tab bar centered horizontally, near top
-            tabBar.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 4),
-            tabBar.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 6),
-
-            // Action buttons right-aligned, same line as tabs
-            refreshButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -4),
-            refreshButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
-            showHiddenFilesButton.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor, constant: -2),
-            showHiddenFilesButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
-            openFolderButton.trailingAnchor.constraint(equalTo: showHiddenFilesButton.leadingAnchor, constant: -2),
-            openFolderButton.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
-
-            // Root label below tab bar
-            rootLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 8),
-            rootLabel.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -2),
-            rootLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -8),
-        ])
     }
 
     // MARK: - Build File Tree
@@ -265,7 +477,7 @@ class SidebarViewController: NSViewController {
         cachedGitStatuses = [:]
         rootNode = FileNode(url: url)
         rootNode?.loadChildren(showHiddenFiles: showsHiddenFiles)
-        rootLabel.stringValue = url.lastPathComponent
+        panelHeader.setRootName(url.lastPathComponent)
         outlineView.reloadData()
         if rootNode != nil {
             outlineView.expandItem(rootNode)
@@ -282,13 +494,24 @@ class SidebarViewController: NSViewController {
         gitAutoRefreshMonitor.stopMonitoring()
     }
 
-    // MARK: - Tab Switching
+    // MARK: - Panel Switching (centralized)
 
-    @objc private func tabChanged(_ sender: NSSegmentedControl) {
-        let isGitTab = sender.selectedSegment == 1
+    private func applyActivePanel(_ panel: SidebarPanel) {
+        activePanel = panel
+
+        // Scroll view visibility
+        let isGitTab = panel == .git
         fileTreeScrollView.isHidden = isGitTab
         gitScrollView.isHidden = !isGitTab
-        updateShowHiddenFilesButton()
+
+        // Activity bar highlight
+        activityBar.setActivePanel(panel)
+
+        // Panel header
+        panelHeader.setPanel(panel)
+        panelHeader.updateHiddenFilesIcon(showing: showsHiddenFiles)
+
+        // Git auto-refresh
         if isGitTab {
             gitAutoRefreshMonitor.requestVisibleRefreshIfNeeded()
         }
@@ -299,7 +522,7 @@ class SidebarViewController: NSViewController {
     @objc private func toggleShowHiddenFiles(_ sender: Any?) {
         showsHiddenFiles.toggle()
         UserDefaults.standard.set(showsHiddenFiles, forKey: "sidebarShowHiddenFiles")
-        updateShowHiddenFilesButton()
+        panelHeader.updateHiddenFilesIcon(showing: showsHiddenFiles)
         reloadFileTree()
     }
 
@@ -327,7 +550,7 @@ class SidebarViewController: NSViewController {
 
     @objc private func refreshTree(_ sender: Any?) {
         guard let url = rootURL else { return }
-        if tabBar.selectedSegment == 1 {
+        if activePanel == .git {
             gitAutoRefreshMonitor.requestImmediateRefresh(.manual)
         } else {
             setRootDirectory(url)
@@ -337,17 +560,6 @@ class SidebarViewController: NSViewController {
     private func reloadFileTree() {
         guard let url = rootURL else { return }
         setRootDirectory(url)
-    }
-
-    private func updateShowHiddenFilesButton() {
-        let isFilesTab = tabBar?.selectedSegment != 1
-        let symbolName = showsHiddenFiles ? "eye" : "eye.slash"
-        let accessibilityDescription = showsHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
-        showHiddenFilesButton?.image = NSImage(systemSymbolName: symbolName,
-                                               accessibilityDescription: accessibilityDescription)
-        showHiddenFilesButton?.toolTip = showsHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
-        showHiddenFilesButton?.isEnabled = isFilesTab
-        showHiddenFilesButton?.alphaValue = isFilesTab ? 1.0 : 0.5
     }
 
     @objc private func outlineViewClicked(_ sender: Any?) {
@@ -451,13 +663,9 @@ class SidebarViewController: NSViewController {
         }
         gitRows = rows
 
-        // Update tab badge: show change count on Git tab
+        // Update badge on activity bar
         let totalChanges = repos.reduce(0) { $0 + $1.statuses.count }
-        if totalChanges > 0 {
-            tabBar.setLabel("Git (\(totalChanges))", forSegment: 1)
-        } else {
-            tabBar.setLabel("Git", forSegment: 1)
-        }
+        activityBar.setBadge(totalChanges, for: .git)
 
         gitChangesTable.reloadData()
     }
@@ -483,13 +691,13 @@ class SidebarViewController: NSViewController {
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingTail
-            textField.font = Self.uiFont(ofSize: 13)
+            textField.font = sidebarUIFont(ofSize: 13)
             cell.addSubview(textField)
             cell.textField = textField
 
             let badge = NSTextField(labelWithString: "")
             badge.translatesAutoresizingMaskIntoConstraints = false
-            badge.font = Self.uiMonoFont(ofSize: 11, weight: .bold)
+            badge.font = sidebarUIMonoFont(ofSize: 11, weight: .bold)
             badge.alignment = .center
             badge.tag = 100
             cell.addSubview(badge)
@@ -535,7 +743,7 @@ class SidebarViewController: NSViewController {
 
             let badge = NSTextField(labelWithString: "")
             badge.translatesAutoresizingMaskIntoConstraints = false
-            badge.font = Self.uiMonoFont(ofSize: 11, weight: .bold)
+            badge.font = sidebarUIMonoFont(ofSize: 11, weight: .bold)
             badge.alignment = .center
             badge.tag = 200
             cell.addSubview(badge)
@@ -543,7 +751,7 @@ class SidebarViewController: NSViewController {
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
             textField.lineBreakMode = .byTruncatingHead
-            textField.font = Self.uiFont(ofSize: 13)
+            textField.font = sidebarUIFont(ofSize: 13)
             cell.addSubview(textField)
             cell.textField = textField
 
@@ -590,14 +798,14 @@ class SidebarViewController: NSViewController {
 
             let textField = NSTextField(labelWithString: "")
             textField.translatesAutoresizingMaskIntoConstraints = false
-            textField.font = Self.uiFont(ofSize: 13, weight: .semibold)
+            textField.font = sidebarUIFont(ofSize: 13, weight: .semibold)
             textField.lineBreakMode = .byTruncatingTail
             cell.addSubview(textField)
             cell.textField = textField
 
             let countLabel = NSTextField(labelWithString: "")
             countLabel.translatesAutoresizingMaskIntoConstraints = false
-            countLabel.font = Self.uiMonoFont(ofSize: 11, weight: .medium)
+            countLabel.font = sidebarUIMonoFont(ofSize: 11, weight: .medium)
             countLabel.alignment = .center
             countLabel.tag = 302
             cell.addSubview(countLabel)
@@ -650,6 +858,14 @@ class SidebarViewController: NSViewController {
                 ?? NSWorkspace.shared.icon(for: .folder)
         }
         return NSWorkspace.shared.icon(forFile: node.url.path)
+    }
+}
+
+// MARK: - ActivityBarDelegate
+
+extension SidebarViewController: ActivityBarDelegate {
+    fileprivate func activityBar(_ bar: ActivityBarView, didSelectPanel panel: SidebarPanel) {
+        applyActivePanel(panel)
     }
 }
 

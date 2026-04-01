@@ -14,8 +14,8 @@ class WorkspaceViewController: NSViewController {
     private(set) var currentOverlay: OverlayPanel?
 
     /// The default sidebar width when first opened.
-    static let defaultSidebarWidth: CGFloat = 220
-    private static let minSidebarWidth: CGFloat = 150
+    static let defaultSidebarWidth: CGFloat = 260
+    private static let minSidebarWidth: CGFloat = 220
     private static let maxSidebarWidth: CGFloat = 500
 
     /// The current sidebar width (persisted via UserDefaults).
