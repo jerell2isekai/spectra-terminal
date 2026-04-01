@@ -223,7 +223,7 @@ class PaneTabController {
         for (i, tab) in tabs.enumerated() {
             guard let tc = tab as? TerminalController,
                   let s = tc.surface.surface, s == surface else { continue }
-            tabTitles[i] = title
+            tabTitles[i] = TerminalController.normalizeDisplayTitle(title)
             if tabs.count > 1 {
                 let icons = tabs.map { $0.tabIcon }
                 tabBarView.reload(titles: tabTitles, icons: icons, activeIndex: activeTabIndex)

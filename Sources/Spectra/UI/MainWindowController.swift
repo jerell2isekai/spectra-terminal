@@ -52,21 +52,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
 
-        #if ENABLE_SIDECAR
-        // Restore sidecar panel state
-        let sidecarWasOpen = UserDefaults.standard.bool(forKey: "sidecarOpen")
-        if sidecarWasOpen {
-            workspaceVC.setSidecarCollapsed(false, animated: false)
-            let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-            var frame = window.frame
-            frame.size.width += workspaceVC.sidecarWidth
-            if frame.maxX > screenFrame.maxX {
-                frame.size.width = screenFrame.maxX - frame.origin.x
-            }
-            window.setFrame(frame, display: false)
-        }
-        #endif
-
         // Create initial surface after view is in hierarchy
         if let app = bridge.app {
             splitVC.allTerminals().first?.surface.createSurface(app: app)
@@ -77,19 +62,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         splitVC.onSurfaceClose = { [weak self] _ in
             self?.window?.performClose(nil)
         }
-        splitVC.onFocusChange = { [weak self] _ in
-            #if ENABLE_SIDECAR
-            guard let self, self.isSidecarOpen else { return }
-            self.updateSidecarTarget()
-            #endif
-        }
-        splitVC.onTerminalInventoryChange = { [weak self] in
-            #if ENABLE_SIDECAR
-            guard let self, self.isSidecarOpen else { return }
-            self.updateSidecarTarget()
-            #endif
-        }
-
         // Notifications
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleTitleChange(_:)),
@@ -212,77 +184,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    #if ENABLE_SIDECAR
-    // MARK: - Sidecar Panel Actions
-
-    /// Whether the sidecar panel is currently open.
-    var isSidecarOpen: Bool {
-        !workspaceVC.isSidecarCollapsed
-    }
-
-    /// Set sidecar panel open/closed state with outset window frame adjustment (right side).
-    func setSidecarOpen(_ open: Bool, animated: Bool = true) {
-        guard let window else {
-            workspaceVC.setSidecarCollapsed(!open, animated: animated)
-            return
-        }
-
-        let isCurrentlyOpen = isSidecarOpen
-        guard open != isCurrentlyOpen else { return }
-
-        let sidecarW = workspaceVC.sidecarWidth
-        let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-
-        var newFrame = window.frame
-        if open {
-            // Expand window to the right
-            newFrame.size.width += sidecarW
-            if newFrame.maxX > screenFrame.maxX {
-                newFrame.size.width = screenFrame.maxX - newFrame.origin.x
-            }
-        } else {
-            newFrame.size.width -= sidecarW
-        }
-
-        if animated {
-            window.setFrame(newFrame, display: true, animate: true)
-        } else {
-            window.setFrame(newFrame, display: true)
-        }
-        workspaceVC.setSidecarCollapsed(!open, animated: animated)
-    }
-
-    @objc func toggleSidecarAction(_ sender: Any?) {
-        let willOpen = !isSidecarOpen
-        setSidecarOpen(willOpen)
-
-        // Wire sidecar to focused terminal when opening
-        if willOpen {
-            updateSidecarTarget()
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self else { return }
-            UserDefaults.standard.set(self.isSidecarOpen, forKey: "sidecarOpen")
-        }
-    }
-
-    /// Refresh the sidecar panel's terminal selector.
-    /// Keeps the current explicit selection when still valid; otherwise falls back
-    /// to the currently focused terminal, then the first available terminal.
-    func updateSidecarTarget() {
-        let sidecar = workspaceVC.sidecarPanelController
-
-        let terminals = splitVC.allTerminals().enumerated().map { (i, tc) in
-            let baseTitle = tc.tabTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            let displayTitle = baseTitle.isEmpty ? "Terminal" : baseTitle
-            return (title: "\(i + 1). \(displayTitle)", controller: tc)
-        }
-
-        sidecar.updateTerminalList(terminals, preferredTarget: splitVC.focusedTerminal)
-    }
-    #endif
-
     // MARK: - Notifications
 
     @objc private func handleTitleChange(_ notification: Notification) {
@@ -293,21 +194,8 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
         if let focused = splitVC.focusedTerminal,
            let ourSurface = focused.surface.surface,
            ourSurface == notifSurface {
-            window?.title = title
+            window?.title = TerminalController.normalizeDisplayTitle(title)
         }
-
-        let ownsChangedSurface = splitVC.allTerminals().contains {
-            guard let terminalSurface = $0.surface.surface else { return false }
-            return terminalSurface == notifSurface
-        }
-        #if ENABLE_SIDECAR
-        if isSidecarOpen && ownsChangedSurface {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.isSidecarOpen else { return }
-                self.updateSidecarTarget()
-            }
-        }
-        #endif
     }
 
     @objc private func handleConfigChange(_ notification: Notification) {
@@ -362,9 +250,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         sidebarVC.setGitRefreshWindowFocused(true)
-        #if ENABLE_SIDECAR
-        if isSidecarOpen { updateSidecarTarget() }
-        #endif
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -374,9 +259,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         sidebarVC.setGitRefreshWindowFocused(false)
         sidebarVC.stopGitAutoRefreshMonitoring()
-        #if ENABLE_SIDECAR
-        workspaceVC.sidecarPanelController.shutdown()
-        #endif
         for ptc in splitVC.allPanes() {
             ptc.detachAll()
         }

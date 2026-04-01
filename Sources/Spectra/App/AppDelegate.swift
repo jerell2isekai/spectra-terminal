@@ -185,10 +185,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                            action: { [weak self] in self?.openGuideSync(nil) }))
         items.append(.init(title: "Toggle Sidebar", subtitle: "Cmd+\\", icon: "sidebar.left",
                            action: { [weak self] in self?.toggleSidebar(nil) }))
-        #if ENABLE_SIDECAR
-        items.append(.init(title: "Toggle Agent Sidecar", subtitle: "Cmd+Shift+R", icon: "sidebar.right",
-                           action: { [weak self] in self?.toggleSidecar(nil) }))
-        #endif
         items.append(.init(title: "Reload Config", subtitle: "", icon: "arrow.clockwise",
                            action: { [weak self] in self?.reloadConfig(nil) }))
         items.append(.init(title: "Open Config File", subtitle: "", icon: "doc.text",
@@ -332,13 +328,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
         wc.toggleSidebarAction(sender)
     }
-
-    #if ENABLE_SIDECAR
-    @objc func toggleSidecar(_ sender: Any?) {
-        guard let wc = NSApp.keyWindow?.windowController as? MainWindowController else { return }
-        wc.toggleSidecarAction(sender)
-    }
-    #endif
 
     // MARK: - Overlay Panels
 
@@ -532,15 +521,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "\\"
         )
         viewMenu.addItem(toggleSidebarItem)
-        #if ENABLE_SIDECAR
-        let toggleSidecarItem = NSMenuItem(
-            title: "Toggle Agent Sidecar",
-            action: #selector(toggleSidecar(_:)),
-            keyEquivalent: "R"  // Cmd+Shift+R
-        )
-        toggleSidecarItem.keyEquivalentModifierMask = [.command, .shift]
-        viewMenu.addItem(toggleSidecarItem)
-        #endif
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         viewMenuItem.submenu = viewMenu

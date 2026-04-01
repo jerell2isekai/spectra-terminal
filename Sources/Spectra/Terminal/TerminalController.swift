@@ -33,10 +33,20 @@ class TerminalController {
                   let ourSurface = self.surface.surface,
                   ourSurface == notifSurface else { return }
 
-            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            self.currentTitle = trimmed.isEmpty ? nil : trimmed
+            let normalized = TerminalController.normalizeDisplayTitle(title)
+            self.currentTitle = normalized == "Terminal" ? nil : normalized
         }
     }
+
+    /// Normalize a raw terminal title: trim whitespace/newlines, fall back to "Terminal" if empty or nil.
+    static func normalizeDisplayTitle(_ rawTitle: String?) -> String {
+        guard let raw = rawTitle else { return "Terminal" }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Terminal" : trimmed
+    }
+
+    /// The canonical normalized display title for this terminal.
+    var displayTitle: String { currentTitle ?? "Terminal" }
 
     /// Attach this terminal to a container view and create the ghostty surface.
     func attach(to containerView: NSView) {
@@ -78,7 +88,7 @@ class TerminalController {
 
 extension TerminalController: TabContent {
     var contentView: NSView { surface }
-    var tabTitle: String { currentTitle ?? "Terminal" }
+    var tabTitle: String { displayTitle }
     var tabIcon: NSImage? { nil }
     var tabType: TabType { .terminal }
 }

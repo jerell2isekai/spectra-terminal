@@ -1,11 +1,5 @@
 // swift-tools-version: 5.9
 import PackageDescription
-import class Foundation.ProcessInfo
-
-var spectraSwiftSettings: [SwiftSetting] = []
-if ProcessInfo.processInfo.environment["ENABLE_SIDECAR"] != nil {
-    spectraSwiftSettings.append(.define("ENABLE_SIDECAR"))
-}
 
 let package = Package(
     name: "Spectra",
@@ -33,7 +27,6 @@ let package = Package(
                 .copy("Resources/js"),
                 .copy("Resources/Guides"),
             ],
-            swiftSettings: spectraSwiftSettings,
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon"),
