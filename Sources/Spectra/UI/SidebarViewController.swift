@@ -58,6 +58,11 @@ private class ActivityBarView: NSView {
     private var buttons: [SidebarPanel: NSButton] = [:]
     private var badges: [SidebarPanel: NSTextField] = [:]
     private var currentPanel: SidebarPanel = .files
+    private var activeTint = NSColor.controlAccentColor
+    private var inactiveTint = NSColor.secondaryLabelColor
+    private var badgeBackground = NSColor.controlAccentColor
+    private var badgeForeground = NSColor.white
+    private var separatorColor = NSColor.separatorColor
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -68,6 +73,7 @@ private class ActivityBarView: NSView {
 
     private func setupUI() {
         translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
 
         stack.orientation = .vertical
         stack.alignment = .centerX
@@ -112,7 +118,7 @@ private class ActivityBarView: NSView {
             badge.translatesAutoresizingMaskIntoConstraints = false
             badge.font = .monospacedSystemFont(ofSize: 9, weight: .bold)
             badge.alignment = .center
-            badge.textColor = .white
+            badge.textColor = badgeForeground
             badge.wantsLayer = true
             badge.isHidden = true
             container.addSubview(badge)
@@ -155,18 +161,33 @@ private class ActivityBarView: NSView {
             badge.stringValue = count > 99 ? "99+" : "\(count)"
             badge.isHidden = false
             badge.layer?.cornerRadius = 7
-            badge.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            badge.textColor = badgeForeground
+            badge.layer?.backgroundColor = badgeBackground.cgColor
         } else {
             badge.isHidden = true
         }
     }
 
+    func applyTheme() {
+        let theme = SpectraThemeManager.shared
+        activeTint = theme.color(.activityBarForeground)
+        inactiveTint = theme.color(.activityBarInactiveForeground)
+        badgeBackground = theme.color(.activityBarBadgeBackground)
+        badgeForeground = theme.color(.activityBarBadgeForeground)
+        separatorColor = theme.color(.separator)
+        layer?.backgroundColor = theme.color(.activityBarBackground).cgColor
+        for badge in badges.values where !badge.isHidden {
+            badge.textColor = badgeForeground
+            badge.layer?.backgroundColor = badgeBackground.cgColor
+        }
+        updateHighlight()
+        needsDisplay = true
+    }
+
     private func updateHighlight() {
         for panel in SidebarPanel.allCases {
             let isActive = panel == currentPanel
-            buttons[panel]?.contentTintColor = isActive
-                ? .controlAccentColor
-                : .secondaryLabelColor
+            buttons[panel]?.contentTintColor = isActive ? activeTint : inactiveTint
             buttons[panel]?.setAccessibilityValue(isActive ? "1" : "0")
         }
     }
@@ -174,7 +195,7 @@ private class ActivityBarView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         // 1px separator on the right edge
-        NSColor.separatorColor.setFill()
+        separatorColor.setFill()
         NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
     }
 }
@@ -224,6 +245,7 @@ private class PanelHeaderView: NSView {
 
     private func setupUI() {
         translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = sidebarUIFont(ofSize: 10, weight: .semibold)
@@ -272,6 +294,16 @@ private class PanelHeaderView: NSView {
         ])
     }
 
+    func applyTheme() {
+        let theme = SpectraThemeManager.shared
+        titleLabel.textColor = theme.color(.sidebarSecondaryForeground)
+        rootLabel.textColor = theme.color(.sidebarTertiaryForeground)
+        layer?.backgroundColor = theme.color(.sidebarBackground).cgColor
+        for button in [openFolderButton, showHiddenFilesButton, refreshButton] {
+            button.contentTintColor = theme.color(.sidebarSecondaryForeground)
+        }
+    }
+
     func setPanel(_ panel: SidebarPanel) {
         titleLabel.stringValue = panel.title
         showHiddenFilesButton.isHidden = panel != .files
@@ -318,6 +350,7 @@ class SidebarViewController: NSViewController {
     private(set) var rootURL: URL?
     private var showsHiddenFiles: Bool = UserDefaults.standard.bool(forKey: "sidebarShowHiddenFiles")
     private var cachedGitStatuses: [String: FileNode.GitStatus] = [:]
+    private var themeObserver: NSObjectProtocol?
     private var gitStatusGeneration: Int = 0
     private var discoveredRepos: [GitStatusProvider.RepoInfo] = []
     private var gitRows: [GitRow] = []
@@ -400,6 +433,20 @@ class SidebarViewController: NSViewController {
         panelHeader.setPanel(.files)
 
         self.view = container
+        applyTheme()
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyTheme()
+        }
+    }
+
+    deinit {
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+        }
     }
 
     // MARK: - Build File Tree
@@ -495,6 +542,13 @@ class SidebarViewController: NSViewController {
     }
 
     // MARK: - Panel Switching (centralized)
+
+    private func applyTheme() {
+        activityBar.applyTheme()
+        panelHeader.applyTheme()
+        outlineView?.reloadData()
+        gitChangesTable?.reloadData()
+    }
 
     private func applyActivePanel(_ panel: SidebarPanel) {
         activePanel = panel
@@ -826,12 +880,12 @@ class SidebarViewController: NSViewController {
         }
 
         cell.textField?.stringValue = "\(name)  ⎇ \(branch)"
-        cell.textField?.textColor = .labelColor
+        cell.textField?.textColor = SpectraThemeManager.shared.color(.sidebarForeground)
 
         if let icon = cell.viewWithTag(301) as? NSImageView {
             icon.image = NSImage(systemSymbolName: "arrow.triangle.branch",
                                  accessibilityDescription: "Git repo")
-            icon.contentTintColor = .secondaryLabelColor
+            icon.contentTintColor = SpectraThemeManager.shared.color(.sidebarSecondaryForeground)
         }
 
         if let countLabel = cell.viewWithTag(302) as? NSTextField {

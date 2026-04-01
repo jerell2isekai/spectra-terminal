@@ -18,6 +18,7 @@ class PaneTabBarView: NSView {
     private let stackView = NSStackView()
     private let addButton: NSButton
     private var tabItems: [PaneTabItemView] = []
+    private var themeObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
         addButton = NSButton(title: "+", target: nil, action: nil)
@@ -29,7 +30,7 @@ class PaneTabBarView: NSView {
         addButton.action = #selector(addButtonClicked)
         addButton.isBordered = false
         addButton.font = .systemFont(ofSize: 14, weight: .medium)
-        addButton.contentTintColor = .secondaryLabelColor
+        addButton.contentTintColor = SpectraThemeManager.shared.color(.tabInactiveForeground)
         addButton.refusesFirstResponder = true
         addButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
 
@@ -46,12 +47,35 @@ class PaneTabBarView: NSView {
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
+
+        applyTheme()
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyTheme()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit {
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+        }
+    }
+
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.95).cgColor
+        layer?.backgroundColor = SpectraThemeManager.shared.color(.tabBarBackground).cgColor
+    }
+
+    private func applyTheme() {
+        addButton.contentTintColor = SpectraThemeManager.shared.color(.tabInactiveForeground)
+        for item in tabItems {
+            item.applyTheme()
+        }
+        needsDisplay = true
     }
 
     func reload(titles: [String], icons: [NSImage?]? = nil, activeIndex: Int) {
@@ -188,10 +212,11 @@ private class PaneTabItemView: NSView {
     /// Called by AppKit with the correct NSAppearance.current already set,
     /// so dynamic NSColor → CGColor resolution matches the view's appearance.
     override func updateLayer() {
+        let theme = SpectraThemeManager.shared
         if isActive {
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.backgroundColor = theme.color(.tabActiveBackground).cgColor
         } else {
-            layer?.backgroundColor = NSColor.clear.cgColor
+            layer?.backgroundColor = theme.color(.tabInactiveBackground).cgColor
         }
     }
 
@@ -202,14 +227,19 @@ private class PaneTabItemView: NSView {
     }
 
     /// Update non-layer properties and schedule a layer redraw.
+    func applyTheme() {
+        updateAppearance()
+    }
+
     private func updateAppearance() {
+        let theme = SpectraThemeManager.shared
         if isActive {
-            titleLabel.textColor = .labelColor
-            closeButton.contentTintColor = .secondaryLabelColor
+            titleLabel.textColor = theme.color(.tabActiveForeground)
+            closeButton.contentTintColor = theme.color(.tabInactiveForeground)
             closeButton.alphaValue = 1
         } else {
-            titleLabel.textColor = .secondaryLabelColor
-            closeButton.contentTintColor = .tertiaryLabelColor
+            titleLabel.textColor = theme.color(.tabInactiveForeground)
+            closeButton.contentTintColor = theme.color(.tabInactiveCloseForeground)
             closeButton.alphaValue = isHovered ? 0.7 : 0
         }
         needsDisplay = true  // triggers updateLayer() in correct appearance context

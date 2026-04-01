@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Settings form content designed to be embedded inside an OverlayPanel.
 /// Replaces SettingsWindowController with an in-window overlay approach.
@@ -14,7 +15,8 @@ class SettingsContentView: NSView {
 
     // Appearance tab
     private var appearancePopup: NSPopUpButton!
-    private var themeField: NSTextField!
+    private var uiThemePopup: NSPopUpButton!
+    private var terminalThemePopup: NSPopUpButton!
     private var opacitySlider: NSSlider!
     private var opacityLabel: NSTextField!
     private var blurPopup: NSPopUpButton!
@@ -105,6 +107,14 @@ class SettingsContentView: NSView {
         SpectraConfig.read(key, default: d)
     }
 
+    private func titleForAppearanceMode(_ mode: String) -> String {
+        switch mode {
+        case "light": return "Light"
+        case "dark": return "Dark"
+        default: return "Auto"
+        }
+    }
+
     // MARK: - General Tab
 
     private func buildGeneralTab() {
@@ -128,8 +138,7 @@ class SettingsContentView: NSView {
         stack.addArrangedSubview(importRow)
 
         addApplyButton(to: stack)
-        formContainer.addSubview(stack)
-        pinStack(stack)
+        embedScrollableStack(stack)
     }
 
     // MARK: - Appearance Tab
@@ -137,20 +146,56 @@ class SettingsContentView: NSView {
     private func buildAppearanceTab() {
         let stack = makeStack()
 
-        addSectionHeader(to: stack, title: "THEME")
+        addSectionHeader(to: stack, title: "UI THEME")
 
-        appearancePopup = addPopupRow(to: stack, label: "Appearance:",
-                                       items: ["System", "Light", "Dark"],
-                                       selected: {
-            switch cfg("spectra-appearance", default: "system") {
-            case "light": return "Light"
-            case "dark": return "Dark"
-            default: return "System"
-            }
-        }())
+        appearancePopup = addPopupRow(to: stack, label: "Base Appearance:",
+                                       items: ["Auto", "Light", "Dark"],
+                                       selected: titleForAppearanceMode(SpectraThemeManager.shared.configuredAppearanceMode()))
 
-        themeField = addField(to: stack, label: "Theme:", value: cfg("theme"),
-                              placeholder: "e.g. catppuccin-mocha")
+        uiThemePopup = NSPopUpButton()
+        rebuildUIThemePopup()
+        let themeRow = NSStackView()
+        themeRow.orientation = .horizontal; themeRow.spacing = 8
+        let tLbl = NSTextField(labelWithString: "UI Theme:")
+        tLbl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        tLbl.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        themeRow.addArrangedSubview(tLbl)
+        themeRow.addArrangedSubview(uiThemePopup)
+        stack.addArrangedSubview(themeRow)
+
+        let themeActionRow = NSStackView()
+        themeActionRow.orientation = .horizontal; themeActionRow.spacing = 8
+        let importThemeBtn = NSButton(title: "Import…", target: self,
+                                      action: #selector(importUIThemeFile(_:)))
+        importThemeBtn.bezelStyle = .rounded
+        let previewThemeBtn = NSButton(title: "Preview", target: self,
+                                        action: #selector(previewSelectedUITheme(_:)))
+        previewThemeBtn.bezelStyle = .rounded
+        let applyThemeBtn = NSButton(title: "Apply", target: self,
+                                      action: #selector(applySelectedUITheme(_:)))
+        applyThemeBtn.bezelStyle = .rounded
+        let resetThemeBtn = NSButton(title: "Use System Default", target: self,
+                                     action: #selector(resetUIThemeSelection(_:)))
+        resetThemeBtn.bezelStyle = .rounded
+        themeActionRow.addArrangedSubview(importThemeBtn)
+        themeActionRow.addArrangedSubview(previewThemeBtn)
+        themeActionRow.addArrangedSubview(applyThemeBtn)
+        themeActionRow.addArrangedSubview(resetThemeBtn)
+        stack.addArrangedSubview(themeActionRow)
+
+        addSectionHeader(to: stack, title: "TERMINAL THEME")
+        let configuredGhosttyTheme = cfg("theme")
+        var ghosttyThemes = ["Follow Appearance"] + GhosttyThemeCatalog.bundledThemeNames()
+        if !configuredGhosttyTheme.isEmpty && !ghosttyThemes.contains(configuredGhosttyTheme) {
+            ghosttyThemes.insert(configuredGhosttyTheme, at: 1)
+        }
+        terminalThemePopup = addPopupRow(
+            to: stack,
+            label: "Ghostty Theme:",
+            items: ghosttyThemes,
+            selected: configuredGhosttyTheme.isEmpty ? "Follow Appearance" : configuredGhosttyTheme
+        )
+        addNote(to: stack, text: "Uses bundled Ghostty themes only in this implementation slice")
 
         addSectionHeader(to: stack, title: "BACKGROUND")
 
@@ -212,8 +257,7 @@ class SettingsContentView: NSView {
                                            selected: balanceSelected)
 
         addApplyButton(to: stack)
-        formContainer.addSubview(stack)
-        pinStack(stack)
+        embedScrollableStack(stack)
     }
 
     // MARK: - Font Tab
@@ -266,8 +310,7 @@ class SettingsContentView: NSView {
         stack.addArrangedSubview(fontPreview)
 
         addApplyButton(to: stack)
-        formContainer.addSubview(stack)
-        pinStack(stack)
+        embedScrollableStack(stack)
     }
 
     private func installedMonospaceFonts() -> [String] {
@@ -317,6 +360,99 @@ class SettingsContentView: NSView {
         updateFontPreview()
     }
 
+    private func rebuildUIThemePopup() {
+        guard let uiThemePopup else { return }
+        uiThemePopup.removeAllItems()
+        let allThemes = SpectraThemeManager.shared.allUIThemes()
+        for theme in allThemes {
+            let label = "\(theme.title)  (\(theme.sourceBadge), \(theme.typeBadge))"
+            uiThemePopup.addItem(withTitle: label)
+            uiThemePopup.lastItem?.representedObject = "\(theme.source.rawValue)::\(theme.id)"
+        }
+        // Select the currently applied theme
+        if SpectraConfig.hasExplicitUIThemeSelection {
+            let currentID = SpectraConfig.uiThemeID
+            let currentSource = SpectraConfig.uiThemeSource
+            if let idx = allThemes.firstIndex(where: { $0.id == currentID && $0.source == currentSource }) {
+                uiThemePopup.selectItem(at: idx)
+            }
+        } else {
+            uiThemePopup.selectItem(at: 0)
+        }
+    }
+
+    private func selectedUITheme() -> SpectraUITheme? {
+        guard let raw = uiThemePopup?.selectedItem?.representedObject as? String else { return nil }
+        let parts = raw.components(separatedBy: "::")
+        guard parts.count == 2, let source = SpectraUIThemeSource(rawValue: parts[0]) else { return nil }
+        return SpectraThemeManager.shared.allUIThemes().first { $0.id == parts[1] && $0.source == source }
+    }
+
+    @objc private func previewSelectedUITheme(_ sender: Any?) {
+        guard let theme = selectedUITheme() else { return }
+        SpectraThemeManager.shared.preview(themeID: theme.id, source: theme.source)
+    }
+
+    @objc private func applySelectedUITheme(_ sender: Any?) {
+        guard let theme = selectedUITheme() else { return }
+        // clearPreview() is handled by AppDelegate's onChange handler AFTER config is written.
+        // Calling it here (before writeAndReload) would trigger a KVO reentrant loop because
+        // hasExplicitUIThemeSelection is still false at this point.
+
+        var updates: [String: String] = [
+            "spectra-ui-theme": theme.id,
+            "spectra-ui-theme-source": theme.source.rawValue,
+        ]
+
+        let normalizedAppearance = SpectraThemeManager.normalizedAppearanceMode(
+            SpectraConfig.uiAppearanceMode,
+            themeKind: theme.kind
+        )
+        if normalizedAppearance != SpectraConfig.uiAppearanceMode {
+            updates["spectra-ui-appearance"] = normalizedAppearance
+            appearancePopup?.selectItem(withTitle: titleForAppearanceMode(normalizedAppearance))
+        }
+
+        configManager.writeAndReload(updates, scope: .ui)
+    }
+
+    @objc private func resetUIThemeSelection(_ sender: Any?) {
+        // clearPreview() is handled by AppDelegate's onChange handler after config is written.
+        configManager.writeAndReload([
+            "spectra-ui-theme": "",
+            "spectra-ui-theme-source": "",
+            "spectra-ui-appearance": "auto",
+            "spectra-appearance": "",
+        ], scope: .ui)
+        appearancePopup?.selectItem(withTitle: "Auto")
+        rebuildUIThemePopup()
+    }
+
+    @objc private func importUIThemeFile(_ sender: Any?) {
+        guard let win = window else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import VS Code Theme File"
+        panel.allowedContentTypes = [.json, .plainText]
+        panel.allowsOtherFileTypes = true
+        panel.beginSheetModal(for: win) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            do {
+                let installedAt = ISO8601DateFormatter().string(from: Date())
+                let theme = try SpectraThemeManager.shared.importTheme(from: url, installedAt: installedAt)
+                self.rebuildUIThemePopup()
+                // Select and preview the newly imported theme
+                let allThemes = SpectraThemeManager.shared.allUIThemes()
+                if let idx = allThemes.firstIndex(where: { $0.id == theme.id && $0.source == theme.source }) {
+                    self.uiThemePopup?.selectItem(at: idx)
+                }
+                SpectraThemeManager.shared.preview(themeID: theme.id, source: theme.source)
+            } catch {
+                let alert = NSAlert(error: error)
+                alert.beginSheetModal(for: win) { _ in }
+            }
+        }
+    }
+
     @objc private func applySettings(_ sender: Any?) {
         var updates: [String: String] = [:]
 
@@ -326,14 +462,26 @@ class SettingsContentView: NSView {
             updates["window-height"] = windowHeightField.stringValue
 
         case .appearance:
-            let modeTitle = appearancePopup.titleOfSelectedItem ?? "System"
-            switch modeTitle {
-            case "Light": updates["spectra-appearance"] = "light"
-            case "Dark":  updates["spectra-appearance"] = "dark"
-            default:      updates["spectra-appearance"] = "system"
+            let modeTitle = appearancePopup.titleOfSelectedItem ?? "Auto"
+            let requestedAppearanceMode: String = {
+                switch modeTitle {
+                case "Light": return "light"
+                case "Dark": return "dark"
+                default: return "auto"
+                }
+            }()
+            let explicitThemeKind: SpectraUIThemeKind? = SpectraConfig.hasExplicitUIThemeSelection ? SpectraThemeManager.shared.currentTheme.kind : nil
+            let normalizedAppearanceMode = SpectraThemeManager.normalizedAppearanceMode(
+                requestedAppearanceMode,
+                themeKind: explicitThemeKind
+            )
+            updates["spectra-ui-appearance"] = normalizedAppearanceMode
+            if normalizedAppearanceMode != requestedAppearanceMode {
+                appearancePopup.selectItem(withTitle: titleForAppearanceMode(normalizedAppearanceMode))
             }
-            let theme = themeField.stringValue.trimmingCharacters(in: .whitespaces)
-            if !theme.isEmpty { updates["theme"] = theme }
+            if let theme = terminalThemePopup.titleOfSelectedItem {
+                updates["theme"] = theme == "Follow Appearance" ? "" : theme
+            }
 
             updates["background-opacity"] = String(format: "%.2f", opacitySlider.doubleValue)
             updates["background-blur"] = blurPopup.titleOfSelectedItem == "On" ? "true" : "false"
@@ -408,14 +556,42 @@ class SettingsContentView: NSView {
         return s
     }
 
-    private func pinStack(_ s: NSStackView) {
-        let bottom = s.bottomAnchor.constraint(equalTo: formContainer.bottomAnchor)
-        bottom.priority = .defaultHigh
+    private func embedScrollableStack(_ stack: NSStackView) {
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        let documentView = FlippedView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+        documentView.addSubview(stack)
+
+        // The OverlayPanel (.medium) uses auto-height: a shrink constraint
+        // (height=0, priority 250) plus a max constraint (≤85%, required).
+        // NSScrollView has no intrinsicContentSize, so the panel would collapse
+        // without upward height pressure. This constraint makes the scroll view
+        // prefer to be as tall as its content (priority 510 > shrink's 250),
+        // but yields to the panel's max-height cap (required).
+        let contentHeight = scrollView.heightAnchor.constraint(equalTo: stack.heightAnchor)
+        contentHeight.priority = .init(rawValue: 510)
+
+        formContainer.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            s.topAnchor.constraint(equalTo: formContainer.topAnchor),
-            s.leadingAnchor.constraint(equalTo: formContainer.leadingAnchor),
-            s.trailingAnchor.constraint(equalTo: formContainer.trailingAnchor),
-            bottom,
+            scrollView.topAnchor.constraint(equalTo: formContainer.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: formContainer.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: formContainer.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: formContainer.bottomAnchor),
+            contentHeight,
+
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
     }
 
@@ -483,4 +659,8 @@ class SettingsContentView: NSView {
         row.addArrangedSubview(btn)
         stack.addArrangedSubview(row)
     }
+}
+
+private class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }

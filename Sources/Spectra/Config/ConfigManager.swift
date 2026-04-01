@@ -4,7 +4,13 @@ import GhosttyKit
 /// Manages Spectra's config lifecycle: load ghostty-format config directly, watch for changes.
 /// No TOML parsing or format translation needed — config is native ghostty format.
 class ConfigManager {
-    var onChange: (() -> Void)?
+    enum ReloadScope {
+        case ui
+        case terminal
+        case all
+    }
+
+    var onChange: ((ReloadScope) -> Void)?
 
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
@@ -60,18 +66,18 @@ class ConfigManager {
 
     // MARK: - Reload
 
-    func reload() {
-        onChange?()
+    func reload(scope: ReloadScope = .all) {
+        onChange?(scope)
     }
 
     /// Write updates to config file and trigger reload. Suppresses file watcher.
-    func writeAndReload(_ updates: [String: String]) {
+    func writeAndReload(_ updates: [String: String], scope: ReloadScope = .all) {
         suppressFileWatch = true
         SpectraConfig.write(updates)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.suppressFileWatch = false
         }
-        onChange?()
+        onChange?(scope)
     }
 
     // MARK: - File Watching
@@ -94,7 +100,7 @@ class ConfigManager {
             guard let self, !self.suppressFileWatch else { return }
             let flags = source.data
             self.debounceWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.reload() }
+            let work = DispatchWorkItem { [weak self] in self?.reload(scope: .all) }
             self.debounceWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
 

@@ -4,10 +4,13 @@ import GhosttyKit
 class AppDelegate: NSObject, NSApplicationDelegate {
     let bridge = GhosttyBridge()
     let configManager = ConfigManager()
+    private let themeManager = SpectraThemeManager.shared
     private var windowControllers: [MainWindowController] = []
     private var settingsContent: SettingsContentView?
     private var commandPalette: CommandPaletteController?
     private var appearanceObserver: NSKeyValueObservation?
+    private var themeObserver: NSObjectProtocol?
+    private var isApplyingAppearance = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAppIcon()
@@ -23,19 +26,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         bridge.initialize(configManager: configManager)
 
-        configManager.onChange = { [weak self] in
+        configManager.onChange = { [weak self] scope in
             guard let self else { return }
-            self.bridge.reloadConfig()
-            self.applyAppearanceMode()
-            NotificationCenter.default.post(name: GhosttyBridge.configDidChange, object: nil)
+            self.themeManager.clearPreview()
+            switch scope {
+            case .ui:
+                self.themeManager.reloadFromConfig()
+                self.applyAppearanceMode()
+            case .terminal:
+                self.bridge.reloadConfig()
+                self.applyAppearanceMode()
+                NotificationCenter.default.post(name: GhosttyBridge.configDidChange, object: nil)
+            case .all:
+                self.bridge.reloadConfig()
+                self.themeManager.reloadFromConfig()
+                self.applyAppearanceMode()
+                NotificationCenter.default.post(name: GhosttyBridge.configDidChange, object: nil)
+            }
         }
         configManager.startWatching()
 
+        themeManager.reloadFromConfig()
         applyAppearanceMode()
 
-        // Observe system appearance changes to update ghostty color scheme
+        // Observe system appearance changes to update implicit UI theme fallback + ghostty color scheme
         appearanceObserver = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
-            self?.syncColorScheme()
+            guard let self else { return }
+            if SpectraConfig.uiAppearanceMode == "auto" && !SpectraConfig.hasExplicitUIThemeSelection {
+                self.themeManager.reloadFromConfig()
+            }
+            self.syncColorScheme()
+        }
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyAppearanceMode()
         }
 
         // Restore previous session or create a fresh window
@@ -63,6 +90,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         saveSession()
         configManager.stopWatching()
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+            self.themeObserver = nil
+        }
         bridge.shutdown()
     }
 
@@ -276,6 +307,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let overlay = wc.showOverlay(title: "Settings", content: content, size: .medium)
         overlay.setHeaderToolbar(content.headerToolbar)
         overlay.onDismiss = { [weak self] in
+            SpectraThemeManager.shared.clearPreview()
             self?.settingsContent = nil
         }
     }
@@ -298,25 +330,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func reloadConfig(_ sender: Any?) {
-        configManager.reload()
+        configManager.reload(scope: .all)
     }
 
     // MARK: - Appearance Mode
 
     private func applyAppearanceMode() {
-        switch SpectraConfig.appearanceMode {
-        case "light":
-            NSApp.appearance = NSAppearance(named: .aqua)
-        case "dark":
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-        default:
-            NSApp.appearance = nil  // follow system
-        }
+        guard !isApplyingAppearance else { return }
+        isApplyingAppearance = true
+        defer { isApplyingAppearance = false }
+        NSApp.appearance = themeManager.resolveAppKitAppearance()
         syncColorScheme()
     }
 
     private func syncColorScheme() {
         guard let app = bridge.app else { return }
+        guard !SpectraConfig.hasExplicitGhosttyThemeOrColors() else { return }
         let appearance = NSApp.effectiveAppearance
         let scheme: ghostty_color_scheme_e = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? GHOSTTY_COLOR_SCHEME_DARK

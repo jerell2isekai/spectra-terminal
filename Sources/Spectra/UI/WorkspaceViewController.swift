@@ -8,7 +8,8 @@ class WorkspaceViewController: NSViewController {
     let sidebarVC: SidebarViewController
     let terminalContentVC: SplitViewController
 
-    private var sidebarContainer: NSVisualEffectView!
+    private var sidebarContainer: NSView!
+    private var themeObserver: NSObjectProtocol?
     private(set) var sidebarWidthConstraint: NSLayoutConstraint!
     private var divider: DividerView!
     private(set) var currentOverlay: OverlayPanel?
@@ -35,10 +36,8 @@ class WorkspaceViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Sidebar container with native macOS sidebar vibrancy
-        sidebarContainer = NSVisualEffectView()
-        sidebarContainer.material = .sidebar
-        sidebarContainer.blendingMode = .behindWindow
+        sidebarContainer = NSView()
+        sidebarContainer.wantsLayer = true
         sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sidebarContainer)
 
@@ -93,6 +92,21 @@ class WorkspaceViewController: NSViewController {
         // Start collapsed
         sidebarContainer.isHidden = true
         divider.isHidden = true
+
+        applyTheme()
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyTheme()
+        }
+    }
+
+    deinit {
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+        }
     }
 
     // MARK: - Overlay
@@ -176,12 +190,22 @@ class WorkspaceViewController: NSViewController {
             }
         }
     }
+
+    private func applyTheme() {
+        let theme = SpectraThemeManager.shared
+        sidebarContainer.layer?.backgroundColor = theme.color(.sidebarBackground).cgColor
+        divider.color = theme.color(.separator)
+        view.needsDisplay = true
+    }
 }
 
 // MARK: - Draggable Divider View
 
 private class DividerView: NSView {
     var onDrag: ((CGFloat) -> Void)?
+    var color: NSColor = .separatorColor {
+        didSet { needsDisplay = true }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -192,7 +216,7 @@ private class DividerView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         // Draw 1px line centered in the 6px hit area
-        NSColor.separatorColor.setFill()
+        color.setFill()
         let lineRect = NSRect(x: bounds.midX - 0.5, y: 0, width: 1, height: bounds.height)
         lineRect.fill()
     }

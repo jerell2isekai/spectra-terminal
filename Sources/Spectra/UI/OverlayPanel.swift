@@ -14,7 +14,7 @@ class OverlayPanel: NSView {
     }
 
     private let backdrop = NSView()
-    private let panelView: NSVisualEffectView
+    private let panelView: NSView
     private let headerView = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let closeButton: NSButton
@@ -26,6 +26,7 @@ class OverlayPanel: NSView {
     private var panelCenterYConstraint: NSLayoutConstraint?
 
     private var eventMonitor: Any?
+    private var themeObserver: NSObjectProtocol?
     private let panelSize: Size
 
     // Resize state (large mode only)
@@ -45,10 +46,7 @@ class OverlayPanel: NSView {
     init(title: String, size: Size = .large) {
         self.panelSize = size
 
-        panelView = NSVisualEffectView()
-        panelView.material = .windowBackground
-        panelView.blendingMode = .withinWindow
-        panelView.state = .active
+        panelView = NSView()
         panelView.wantsLayer = true
         panelView.layer?.cornerRadius = 12
         panelView.layer?.masksToBounds = true
@@ -73,12 +71,30 @@ class OverlayPanel: NSView {
         closeButton.setContentHuggingPriority(.required, for: .horizontal)
 
         setupViews()
+        applyTheme()
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyTheme()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
         removeKeyMonitor()
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+        }
+    }
+
+    private func applyTheme() {
+        let theme = SpectraThemeManager.shared
+        panelView.layer?.backgroundColor = theme.color(.overlayBackground).cgColor
+        titleLabel.textColor = theme.color(.overlayForeground)
+        closeButton.contentTintColor = theme.color(.overlaySecondaryForeground)
     }
 
     // MARK: - Setup

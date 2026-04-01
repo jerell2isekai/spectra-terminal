@@ -57,7 +57,9 @@ enum SpectraConfig {
     # Appearance
     # theme = catppuccin-mocha
     background-opacity = 1
-    # spectra-appearance = system  # system, light, or dark
+    # spectra-ui-theme = spectra-default-dark
+    # spectra-ui-theme-source = bundled  # bundled, user
+    # spectra-ui-appearance = auto  # auto, light, or dark
     # split-divider-color = #A8C0B4
     # window-padding-x = 8
     # window-padding-y = 4
@@ -110,6 +112,21 @@ enum SpectraConfig {
         readAll()[key] ?? defaultValue
     }
 
+    static func hasExplicitGhosttyThemeOrColors() -> Bool {
+        let values = readAll()
+        if let theme = values["theme"], !theme.isEmpty { return true }
+        let explicitColorKeys = [
+            "background", "foreground", "cursor-color", "selection-background", "selection-foreground",
+        ]
+        if explicitColorKeys.contains(where: { key in
+            guard let value = values[key] else { return false }
+            return !value.isEmpty
+        }) {
+            return true
+        }
+        return values.keys.contains { $0.hasPrefix("palette") }
+    }
+
     /// Window size from ghostty config. window-width/height are cell counts.
     /// Convert to pixel estimates using typical cell dimensions.
     static var windowWidth: Int {
@@ -122,8 +139,30 @@ enum SpectraConfig {
     }
     static var backgroundOpacity: Double { Double(read("background-opacity") ?? "") ?? 1.0 }
 
-    /// Appearance mode: "system" (follows macOS), "light", or "dark"
-    static var appearanceMode: String { read("spectra-appearance", default: "system") }
+    /// Canonical UI appearance mode: "auto", "light", or "dark".
+    /// Legacy `spectra-appearance` is read-only compatibility and maps `system` -> `auto`.
+    static var uiAppearanceMode: String {
+        if let value = read("spectra-ui-appearance") {
+            return value
+        }
+        let legacy = read("spectra-appearance", default: "system")
+        switch legacy {
+        case "light", "dark": return legacy
+        default: return "auto"
+        }
+    }
+
+    static var uiThemeID: String {
+        read("spectra-ui-theme", default: "spectra-default-dark")
+    }
+
+    static var hasExplicitUIThemeSelection: Bool {
+        read("spectra-ui-theme") != nil
+    }
+
+    static var uiThemeSource: SpectraUIThemeSource {
+        SpectraUIThemeSource(rawValue: read("spectra-ui-theme-source", default: "bundled")) ?? .bundled
+    }
 
     /// Divider color for split panes. Uses an opaque fallback so the divider
     /// remains visible even when the window background is translucent.
@@ -145,13 +184,18 @@ enum SpectraConfig {
             guard let eqIdx = trimmed.firstIndex(of: "=") else { continue }
             let key = trimmed[trimmed.startIndex..<eqIdx].trimmingCharacters(in: .whitespaces)
             if let newValue = updates[key] {
-                lines[i] = "\(key) = \(newValue)"
+                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    lines[i] = ""
+                } else {
+                    lines[i] = "\(key) = \(newValue)"
+                }
                 updatedKeys.insert(key)
             }
         }
 
         // Append new keys that weren't in the file
         for (key, value) in updates where !updatedKeys.contains(key) {
+            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
             lines.append("\(key) = \(value)")
         }
 

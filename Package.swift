@@ -26,6 +26,7 @@ let package = Package(
                 .copy("Resources/ghostty"),
                 .copy("Resources/js"),
                 .copy("Resources/Guides"),
+                .copy("Resources/UIThemes"),
             ],
             linkerSettings: [
                 .linkedFramework("AppKit"),

@@ -5,6 +5,7 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
     private let searchField = NSTextField()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
+    private var themeObserver: NSObjectProtocol?
 
     struct PaletteItem {
         let title: String
@@ -30,7 +31,7 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true
         panel.level = .floating
-        panel.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.95)
+        panel.backgroundColor = SpectraThemeManager.shared.color(.commandPaletteBackground)
         panel.isOpaque = false
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
@@ -39,10 +40,31 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         super.init(window: panel)
 
         setupUI()
+        applyTheme()
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyTheme()
+        }
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
+    }
+
+    deinit {
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+        }
+    }
+
+    private func applyTheme() {
+        let theme = SpectraThemeManager.shared
+        window?.backgroundColor = theme.color(.commandPaletteBackground)
+        searchField.textColor = theme.color(.commandPaletteForeground)
+        tableView.reloadData()
     }
 
     // MARK: - UI Setup
@@ -71,7 +93,7 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         searchField.isBordered = false
         searchField.focusRingType = .none
         searchField.backgroundColor = .clear
-        searchField.textColor = .labelColor
+        searchField.textColor = SpectraThemeManager.shared.color(.commandPaletteForeground)
         searchField.delegate = self
         stack.addArrangedSubview(searchField)
 
@@ -185,6 +207,10 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         filteredItems.count
     }
 
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        tableView.reloadData()
+    }
+
     // MARK: - NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -192,19 +218,21 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
         let cell = NSTableCellView()
         cell.identifier = NSUserInterfaceItemIdentifier("item")
 
+        let theme = SpectraThemeManager.shared
+        let isSelected = row == tableView.selectedRow
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: item.icon, accessibilityDescription: nil)
-        icon.contentTintColor = .secondaryLabelColor
+        icon.contentTintColor = isSelected ? theme.color(.commandPaletteSelectionForeground) : theme.color(.commandPaletteSecondaryForeground)
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: item.title)
         title.font = NSFont.systemFont(ofSize: 13)
-        title.textColor = .labelColor
+        title.textColor = isSelected ? theme.color(.commandPaletteSelectionForeground) : theme.color(.commandPaletteForeground)
         title.lineBreakMode = .byTruncatingTail
 
         let subtitle = NSTextField(labelWithString: item.subtitle)
         subtitle.font = NSFont.systemFont(ofSize: 11)
-        subtitle.textColor = .secondaryLabelColor
+        subtitle.textColor = isSelected ? theme.color(.commandPaletteSelectionForeground).withAlphaComponent(0.85) : theme.color(.commandPaletteSecondaryForeground)
         subtitle.lineBreakMode = .byTruncatingTail
 
         let textStack = NSStackView(views: [title, subtitle])
@@ -230,8 +258,16 @@ class CommandPaletteController: NSWindowController, NSTextFieldDelegate, NSTable
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        let rv = NSTableRowView()
+        let rv = CommandPaletteRowView()
         rv.isEmphasized = false
         return rv
+    }
+}
+
+private final class CommandPaletteRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        SpectraThemeManager.shared.color(.commandPaletteSelectionBackground).setFill()
+        bounds.fill()
     }
 }

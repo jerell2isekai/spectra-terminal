@@ -18,17 +18,14 @@ class FileNode: NSObject {
         case conflicted
 
         var color: NSColor {
+            let theme = SpectraThemeManager.shared
             switch self {
-            case .unmodified: return .labelColor
-            case .modified:   return NSColor(name: nil) { appearance in
-                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                    ? NSColor(red: 0.95, green: 0.65, blue: 0.15, alpha: 1.0)
-                    : NSColor(red: 0.75, green: 0.40, blue: 0.0, alpha: 1.0)
-            }
-            case .added:      return .systemGreen
-            case .deleted:    return .systemRed
-            case .untracked:  return .secondaryLabelColor
-            case .conflicted: return .systemYellow
+            case .unmodified: return theme.color(.sidebarForeground)
+            case .modified:   return theme.color(.gitModified)
+            case .added:      return theme.color(.gitAdded)
+            case .deleted:    return theme.color(.gitDeleted)
+            case .untracked:  return theme.color(.gitUntracked)
+            case .conflicted: return theme.color(.gitConflict)
             }
         }
 
