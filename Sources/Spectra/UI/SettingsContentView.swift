@@ -9,6 +9,13 @@ class SettingsContentView: NSView {
     private let segmentedControl: NSSegmentedControl
     private let formContainer = NSView()
 
+    private var themeObserver: NSObjectProtocol?
+    private var cachedTabViews: [Tab: NSView] = [:]
+    private var activeTabView: NSView?
+    private var tabsNeedingRefresh = Set<Tab>()
+    private var isProgrammaticUIThemeSelection = false
+    private var uiThemeSelectionDirty = false
+
     // General tab
     private var windowWidthField: NSTextField!
     private var windowHeightField: NSTextField!
@@ -62,10 +69,17 @@ class SettingsContentView: NSView {
         segmentedControl.selectedSegment = 0
 
         setupLayout()
+        setupObservers()
         showTab(.general)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let themeObserver {
+            NotificationCenter.default.removeObserver(themeObserver)
+        }
+    }
 
     /// The segmented control to be placed in the overlay header.
     var headerToolbar: NSView { segmentedControl }
@@ -83,6 +97,16 @@ class SettingsContentView: NSView {
         ])
     }
 
+    private func setupObservers() {
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .spectraThemeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleThemeDidChange()
+        }
+    }
+
     // MARK: - Tab Switching
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
@@ -93,11 +117,81 @@ class SettingsContentView: NSView {
     private func showTab(_ tab: Tab) {
         currentTab = tab
         segmentedControl.selectedSegment = tab.rawValue
-        formContainer.subviews.forEach { $0.removeFromSuperview() }
+
+        activeTabView?.removeFromSuperview()
+
+        let tabView = view(for: tab)
+        activeTabView = tabView
+        attachTabView(tabView)
+        refreshTabIfNeeded(tab)
+    }
+
+    private func view(for tab: Tab) -> NSView {
+        if let cached = cachedTabViews[tab] {
+            return cached
+        }
+
+        let tabView: NSView
         switch tab {
-        case .general:    buildGeneralTab()
-        case .appearance: buildAppearanceTab()
-        case .font:       buildFontTab()
+        case .general:
+            tabView = buildGeneralTab()
+        case .appearance:
+            tabView = buildAppearanceTab()
+        case .font:
+            tabView = buildFontTab()
+        }
+
+        cachedTabViews[tab] = tabView
+        tabsNeedingRefresh.remove(tab)
+        return tabView
+    }
+
+    private func attachTabView(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        formContainer.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: formContainer.topAnchor),
+            view.leadingAnchor.constraint(equalTo: formContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: formContainer.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: formContainer.bottomAnchor),
+        ])
+    }
+
+    private func refreshTabIfNeeded(_ tab: Tab) {
+        guard tabsNeedingRefresh.contains(tab) else { return }
+        refreshTab(tab)
+        tabsNeedingRefresh.remove(tab)
+    }
+
+    private func refreshTab(_ tab: Tab) {
+        switch tab {
+        case .general:
+            refreshGeneralControlsFromConfig()
+        case .appearance:
+            refreshAppearanceControlsFromConfig()
+        case .font:
+            refreshFontControlsFromConfig()
+        }
+    }
+
+    private func refreshCurrentTabFromModel() {
+        guard cachedTabViews[currentTab] != nil else { return }
+        refreshTab(currentTab)
+        tabsNeedingRefresh.remove(currentTab)
+    }
+
+    private func invalidateTabsAfterExternalConfigReload() {
+        uiThemeSelectionDirty = false
+        tabsNeedingRefresh.formUnion(Tab.allCases)
+        refreshCurrentTabFromModel()
+    }
+
+    private func handleThemeDidChange() {
+        guard cachedTabViews[.appearance] != nil else { return }
+        if currentTab == .appearance {
+            syncAppearanceThemeControlsFromModel()
+        } else {
+            tabsNeedingRefresh.insert(.appearance)
         }
     }
 
@@ -117,7 +211,7 @@ class SettingsContentView: NSView {
 
     // MARK: - General Tab
 
-    private func buildGeneralTab() {
+    private func buildGeneralTab() -> NSView {
         let stack = makeStack()
 
         windowWidthField = addField(to: stack, label: "Window Width (cols):", value: cfg("window-width", default: "120"))
@@ -138,12 +232,17 @@ class SettingsContentView: NSView {
         stack.addArrangedSubview(importRow)
 
         addApplyButton(to: stack)
-        embedScrollableStack(stack)
+        return embedScrollableStack(stack)
+    }
+
+    private func refreshGeneralControlsFromConfig() {
+        windowWidthField?.stringValue = cfg("window-width", default: "120")
+        windowHeightField?.stringValue = cfg("window-height", default: "36")
     }
 
     // MARK: - Appearance Tab
 
-    private func buildAppearanceTab() {
+    private func buildAppearanceTab() -> NSView {
         let stack = makeStack()
 
         addSectionHeader(to: stack, title: "UI THEME")
@@ -153,6 +252,8 @@ class SettingsContentView: NSView {
                                        selected: titleForAppearanceMode(SpectraThemeManager.shared.configuredAppearanceMode()))
 
         uiThemePopup = NSPopUpButton()
+        uiThemePopup.target = self
+        uiThemePopup.action = #selector(uiThemePopupSelectionChanged(_:))
         rebuildUIThemePopup()
         let themeRow = NSStackView()
         themeRow.orientation = .horizontal; themeRow.spacing = 8
@@ -184,17 +285,16 @@ class SettingsContentView: NSView {
         stack.addArrangedSubview(themeActionRow)
 
         addSectionHeader(to: stack, title: "TERMINAL THEME")
-        let configuredGhosttyTheme = cfg("theme")
-        var ghosttyThemes = ["Follow Appearance"] + GhosttyThemeCatalog.bundledThemeNames()
-        if !configuredGhosttyTheme.isEmpty && !ghosttyThemes.contains(configuredGhosttyTheme) {
-            ghosttyThemes.insert(configuredGhosttyTheme, at: 1)
-        }
-        terminalThemePopup = addPopupRow(
-            to: stack,
-            label: "Ghostty Theme:",
-            items: ghosttyThemes,
-            selected: configuredGhosttyTheme.isEmpty ? "Follow Appearance" : configuredGhosttyTheme
-        )
+        terminalThemePopup = NSPopUpButton()
+        let terminalThemeRow = NSStackView()
+        terminalThemeRow.orientation = .horizontal; terminalThemeRow.spacing = 8
+        let terminalThemeLabel = NSTextField(labelWithString: "Ghostty Theme:")
+        terminalThemeLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        terminalThemeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        terminalThemeRow.addArrangedSubview(terminalThemeLabel)
+        terminalThemeRow.addArrangedSubview(terminalThemePopup)
+        stack.addArrangedSubview(terminalThemeRow)
+        rebuildTerminalThemePopup()
         addNote(to: stack, text: "Uses bundled Ghostty themes only in this implementation slice")
 
         addSectionHeader(to: stack, title: "BACKGROUND")
@@ -244,6 +344,68 @@ class SettingsContentView: NSView {
         paddingYField = addField(to: stack, label: "Padding Y:", value: cfg("window-padding-y", default: "2"))
         addNote(to: stack, text: "Takes effect on new terminals (new tab or split)")
 
+        paddingBalancePopup = NSPopUpButton()
+        let paddingBalanceRow = NSStackView()
+        paddingBalanceRow.orientation = .horizontal; paddingBalanceRow.spacing = 8
+        let paddingBalanceLabel = NSTextField(labelWithString: "Balance:")
+        paddingBalanceLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        paddingBalanceLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        paddingBalanceRow.addArrangedSubview(paddingBalanceLabel)
+        paddingBalanceRow.addArrangedSubview(paddingBalancePopup)
+        stack.addArrangedSubview(paddingBalanceRow)
+        refreshPaddingBalancePopupSelection()
+
+        addApplyButton(to: stack)
+        return embedScrollableStack(stack)
+    }
+
+    private func syncAppearanceThemeControlsFromModel(reloadThemeOptions: Bool = false) {
+        guard appearancePopup != nil else { return }
+
+        appearancePopup.selectItem(withTitle: titleForAppearanceMode(SpectraThemeManager.shared.configuredAppearanceMode()))
+
+        if reloadThemeOptions {
+            rebuildUIThemePopup()
+        } else {
+            syncUIThemePopupSelectionFromModel()
+        }
+    }
+
+    private func refreshAppearanceControlsFromConfig(reloadThemeOptions: Bool = false) {
+        guard appearancePopup != nil else { return }
+
+        syncAppearanceThemeControlsFromModel(reloadThemeOptions: reloadThemeOptions)
+
+        rebuildTerminalThemePopup()
+
+        let opacity = Double(cfg("background-opacity", default: "1")) ?? 1.0
+        opacitySlider?.doubleValue = opacity
+        if let opacitySlider {
+            opacityChanged(opacitySlider)
+        }
+
+        blurPopup?.selectItem(withTitle: cfg("background-blur", default: "false") == "false" ? "Off" : "On")
+        cursorPopup?.selectItem(withTitle: cfg("cursor-style", default: "block"))
+        cursorBlinkCheck?.state = cfg("cursor-style-blink", default: "true") == "true" ? .on : .off
+        paddingXField?.stringValue = cfg("window-padding-x", default: "2")
+        paddingYField?.stringValue = cfg("window-padding-y", default: "2")
+        refreshPaddingBalancePopupSelection()
+    }
+
+    private func rebuildTerminalThemePopup() {
+        guard let terminalThemePopup else { return }
+        let configuredGhosttyTheme = cfg("theme")
+        var ghosttyThemes = ["Follow Appearance"] + GhosttyThemeCatalog.bundledThemeNames()
+        if !configuredGhosttyTheme.isEmpty && !ghosttyThemes.contains(configuredGhosttyTheme) {
+            ghosttyThemes.insert(configuredGhosttyTheme, at: 1)
+        }
+        terminalThemePopup.removeAllItems()
+        terminalThemePopup.addItems(withTitles: ghosttyThemes)
+        terminalThemePopup.selectItem(withTitle: configuredGhosttyTheme.isEmpty ? "Follow Appearance" : configuredGhosttyTheme)
+    }
+
+    private func refreshPaddingBalancePopupSelection() {
+        guard let paddingBalancePopup else { return }
         let balanceValue = cfg("window-padding-balance", default: "false")
         let balanceSelected: String = {
             switch balanceValue {
@@ -252,17 +414,15 @@ class SettingsContentView: NSView {
             default: return "Off"
             }
         }()
-        paddingBalancePopup = addPopupRow(to: stack, label: "Balance:",
-                                           items: ["Off", "On", "Equal"],
-                                           selected: balanceSelected)
-
-        addApplyButton(to: stack)
-        embedScrollableStack(stack)
+        if paddingBalancePopup.numberOfItems == 0 {
+            paddingBalancePopup.addItems(withTitles: ["Off", "On", "Equal"])
+        }
+        paddingBalancePopup.selectItem(withTitle: balanceSelected)
     }
 
     // MARK: - Font Tab
 
-    private func buildFontTab() {
+    private func buildFontTab() -> NSView {
         let stack = makeStack()
 
         let familyRow = NSStackView()
@@ -310,7 +470,24 @@ class SettingsContentView: NSView {
         stack.addArrangedSubview(fontPreview)
 
         addApplyButton(to: stack)
-        embedScrollableStack(stack)
+        return embedScrollableStack(stack)
+    }
+
+    private func refreshFontControlsFromConfig() {
+        guard fontFamilyPopup != nil else { return }
+        let currentFamily = cfg("font-family")
+        if !currentFamily.isEmpty {
+            if let match = installedMonospaceFonts().first(where: {
+                $0.caseInsensitiveCompare(currentFamily) == .orderedSame
+            }) {
+                fontFamilyPopup.selectItem(withTitle: match)
+            }
+        }
+
+        let size = Int(Double(cfg("font-size", default: "13")) ?? 13)
+        fontSizeField?.stringValue = "\(size)"
+        fontSizeStepper?.integerValue = size
+        updateFontPreview()
     }
 
     private func installedMonospaceFonts() -> [String] {
@@ -360,29 +537,62 @@ class SettingsContentView: NSView {
         updateFontPreview()
     }
 
+    @objc private func uiThemePopupSelectionChanged(_ sender: NSPopUpButton) {
+        guard !isProgrammaticUIThemeSelection else { return }
+        uiThemeSelectionDirty = true
+    }
+
+    private func themeSelectionIdentifier(for theme: SpectraUITheme) -> String {
+        "\(theme.source.rawValue)::\(theme.id)"
+    }
+
+    private func selectedUIThemeIdentifier() -> String? {
+        uiThemePopup?.selectedItem?.representedObject as? String
+    }
+
+    private func setUIThemePopupSelection(identifier: String) {
+        guard let uiThemePopup else { return }
+        guard let idx = uiThemePopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == identifier }) else {
+            return
+        }
+        isProgrammaticUIThemeSelection = true
+        uiThemePopup.selectItem(at: idx)
+        isProgrammaticUIThemeSelection = false
+    }
+
+    private func syncUIThemePopupSelectionFromModel() {
+        guard !uiThemeSelectionDirty else { return }
+        let effectiveTheme = SpectraThemeManager.shared.effectiveTheme
+        setUIThemePopupSelection(identifier: themeSelectionIdentifier(for: effectiveTheme))
+    }
+
     private func rebuildUIThemePopup() {
         guard let uiThemePopup else { return }
-        uiThemePopup.removeAllItems()
+        let manualSelection = uiThemeSelectionDirty ? selectedUIThemeIdentifier() : nil
         let allThemes = SpectraThemeManager.shared.allUIThemes()
+
+        isProgrammaticUIThemeSelection = true
+        uiThemePopup.removeAllItems()
         for theme in allThemes {
             let label = "\(theme.title)  (\(theme.sourceBadge), \(theme.typeBadge))"
             uiThemePopup.addItem(withTitle: label)
-            uiThemePopup.lastItem?.representedObject = "\(theme.source.rawValue)::\(theme.id)"
+            uiThemePopup.lastItem?.representedObject = themeSelectionIdentifier(for: theme)
         }
-        // Select the currently applied theme
-        if SpectraConfig.hasExplicitUIThemeSelection {
-            let currentID = SpectraConfig.uiThemeID
-            let currentSource = SpectraConfig.uiThemeSource
-            if let idx = allThemes.firstIndex(where: { $0.id == currentID && $0.source == currentSource }) {
-                uiThemePopup.selectItem(at: idx)
-            }
+        isProgrammaticUIThemeSelection = false
+
+        if let manualSelection,
+           uiThemePopup.itemArray.contains(where: { ($0.representedObject as? String) == manualSelection }) {
+            setUIThemePopupSelection(identifier: manualSelection)
         } else {
-            uiThemePopup.selectItem(at: 0)
+            if manualSelection != nil {
+                uiThemeSelectionDirty = false
+            }
+            syncUIThemePopupSelectionFromModel()
         }
     }
 
     private func selectedUITheme() -> SpectraUITheme? {
-        guard let raw = uiThemePopup?.selectedItem?.representedObject as? String else { return nil }
+        guard let raw = selectedUIThemeIdentifier() else { return nil }
         let parts = raw.components(separatedBy: "::")
         guard parts.count == 2, let source = SpectraUIThemeSource(rawValue: parts[0]) else { return nil }
         return SpectraThemeManager.shared.allUIThemes().first { $0.id == parts[1] && $0.source == source }
@@ -390,6 +600,7 @@ class SettingsContentView: NSView {
 
     @objc private func previewSelectedUITheme(_ sender: Any?) {
         guard let theme = selectedUITheme() else { return }
+        uiThemeSelectionDirty = false
         SpectraThemeManager.shared.preview(themeID: theme.id, source: theme.source)
     }
 
@@ -398,6 +609,7 @@ class SettingsContentView: NSView {
         // clearPreview() is handled by AppDelegate's onChange handler AFTER config is written.
         // Calling it here (before writeAndReload) would trigger a KVO reentrant loop because
         // hasExplicitUIThemeSelection is still false at this point.
+        uiThemeSelectionDirty = false
 
         var updates: [String: String] = [
             "spectra-ui-theme": theme.id,
@@ -418,6 +630,7 @@ class SettingsContentView: NSView {
 
     @objc private func resetUIThemeSelection(_ sender: Any?) {
         // clearPreview() is handled by AppDelegate's onChange handler after config is written.
+        uiThemeSelectionDirty = false
         configManager.writeAndReload([
             "spectra-ui-theme": "",
             "spectra-ui-theme-source": "",
@@ -425,7 +638,6 @@ class SettingsContentView: NSView {
             "spectra-appearance": "",
         ], scope: .ui)
         appearancePopup?.selectItem(withTitle: "Auto")
-        rebuildUIThemePopup()
     }
 
     @objc private func importUIThemeFile(_ sender: Any?) {
@@ -439,12 +651,9 @@ class SettingsContentView: NSView {
             do {
                 let installedAt = ISO8601DateFormatter().string(from: Date())
                 let theme = try SpectraThemeManager.shared.importTheme(from: url, installedAt: installedAt)
+                self.uiThemeSelectionDirty = false
                 self.rebuildUIThemePopup()
-                // Select and preview the newly imported theme
-                let allThemes = SpectraThemeManager.shared.allUIThemes()
-                if let idx = allThemes.firstIndex(where: { $0.id == theme.id && $0.source == theme.source }) {
-                    self.uiThemePopup?.selectItem(at: idx)
-                }
+                self.setUIThemePopupSelection(identifier: self.themeSelectionIdentifier(for: theme))
                 SpectraThemeManager.shared.preview(themeID: theme.id, source: theme.source)
             } catch {
                 let alert = NSAlert(error: error)
@@ -526,7 +735,7 @@ class SettingsContentView: NSView {
             guard response == .alertFirstButtonReturn else { return }
             if SpectraConfig.importFromGhostty() {
                 self?.configManager.reload()
-                self?.showTab(self?.currentTab ?? .general)
+                self?.invalidateTabsAfterExternalConfigReload()
             }
         }
     }
@@ -541,7 +750,7 @@ class SettingsContentView: NSView {
             guard response == .OK, let url = panel.url else { return }
             if SpectraConfig.importFrom(url: url) {
                 self?.configManager.reload()
-                self?.showTab(self?.currentTab ?? .general)
+                self?.invalidateTabsAfterExternalConfigReload()
             }
         }
     }
@@ -556,7 +765,7 @@ class SettingsContentView: NSView {
         return s
     }
 
-    private func embedScrollableStack(_ stack: NSStackView) {
+    private func embedScrollableStack(_ stack: NSStackView) -> NSView {
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
@@ -579,20 +788,16 @@ class SettingsContentView: NSView {
         let contentHeight = scrollView.heightAnchor.constraint(equalTo: stack.heightAnchor)
         contentHeight.priority = .init(rawValue: 510)
 
-        formContainer.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: formContainer.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: formContainer.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: formContainer.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: formContainer.bottomAnchor),
             contentHeight,
-
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
             stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
+
+        return scrollView
     }
 
     @discardableResult
