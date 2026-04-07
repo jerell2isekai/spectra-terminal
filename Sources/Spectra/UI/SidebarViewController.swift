@@ -1416,8 +1416,24 @@ extension SidebarViewController {
                     try fileManager.removeItem(at: destURL)
                 }
                 try fileManager.copyItem(at: sourceURL, to: destURL)
-            } catch {
-                errors.append((sourceURL.lastPathComponent, error.localizedDescription))
+            } catch let copyError {
+                // copyItem failed — fallback to data-only copy for regular files
+                // when the error is EACCES (e.g., SMB share rejecting metadata/xattr writes)
+                let nsError = copyError as NSError
+                let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+                let isPermissionDenied = underlying?.domain == NSPOSIXErrorDomain && underlying?.code == 13
+                    || nsError.code == 513
+
+                if isPermissionDenied && !node.isDirectory {
+                    do {
+                        let data = try Data(contentsOf: sourceURL)
+                        try data.write(to: destURL, options: .atomic)
+                    } catch {
+                        errors.append((sourceURL.lastPathComponent, error.localizedDescription))
+                    }
+                } else {
+                    errors.append((sourceURL.lastPathComponent, copyError.localizedDescription))
+                }
             }
         }
 
