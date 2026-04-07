@@ -2,7 +2,7 @@
 
 A comfortable, clean terminal app for macOS.
 
-![Spectra](website/public/assets/spectra-screenshot.png)
+![Spectra](docs/assets/spectra-screenshot.png)
 
 Spectra is a native macOS terminal built on [libghostty](https://github.com/ghostty-org/ghostty). Split panes, a file sidebar, GPU rendering, and nothing that gets in your way.
 
