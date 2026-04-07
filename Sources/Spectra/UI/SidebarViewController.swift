@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Shared UI Fonts
 
@@ -329,7 +330,7 @@ private class PanelHeaderView: NSView {
 // MARK: - SidebarViewController
 
 /// Sidebar with VS Code-style activity bar (icon strip) and switchable panels.
-class SidebarViewController: NSViewController {
+class SidebarViewController: NSViewController, NSMenuDelegate {
 
     // MARK: - Layout Components
     private var activityBar: ActivityBarView!
@@ -369,6 +370,9 @@ class SidebarViewController: NSViewController {
 
     private let fileColumnID = NSUserInterfaceItemIdentifier("FileColumn")
     private let gitFileColumnID = NSUserInterfaceItemIdentifier("GitFileColumn")
+
+    // MARK: - Context Menu
+    private var contextMenu: NSMenu!
 
     override func loadView() {
         let container = NSView()
@@ -461,6 +465,7 @@ class SidebarViewController: NSViewController {
         outlineView.indentationPerLevel = 14
         outlineView.autoresizesOutlineColumn = true
         outlineView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        outlineView.allowsMultipleSelection = true
 
         let column = NSTableColumn(identifier: fileColumnID)
         column.title = "Name"
@@ -472,9 +477,14 @@ class SidebarViewController: NSViewController {
 
         outlineView.dataSource = self
         outlineView.delegate = self
-        outlineView.action = #selector(outlineViewClicked(_:))
         outlineView.doubleAction = #selector(outlineViewDoubleClicked(_:))
         outlineView.target = self
+
+        // Context menu
+        contextMenu = NSMenu()
+        contextMenu.delegate = self
+        contextMenu.autoenablesItems = false
+        outlineView.menu = contextMenu
 
         fileTreeScrollView = NSScrollView()
         fileTreeScrollView.documentView = outlineView
@@ -539,6 +549,13 @@ class SidebarViewController: NSViewController {
 
     func stopGitAutoRefreshMonitoring() {
         gitAutoRefreshMonitor.stopMonitoring()
+    }
+
+    var selectedFileNodes: [FileNode] {
+        guard let outlineView = outlineView else { return [] }
+        return outlineView.selectedRowIndexes.compactMap { rowIndex in
+            outlineView.item(atRow: rowIndex) as? FileNode
+        }
     }
 
     // MARK: - Panel Switching (centralized)
@@ -616,16 +633,13 @@ class SidebarViewController: NSViewController {
         setRootDirectory(url)
     }
 
-    @objc private func outlineViewClicked(_ sender: Any?) {
-        let clickedRow = outlineView.clickedRow
-        guard clickedRow >= 0,
-              let node = outlineView.item(atRow: clickedRow) as? FileNode,
-              !node.isDirectory else { return }
+    // MARK: - Preview Helper
 
+    private func requestPreview(for url: URL) {
         NotificationCenter.default.post(
             name: .sidebarOpenFilePreview,
             object: nil,
-            userInfo: ["url": node.url]
+            userInfo: ["url": url]
         )
     }
 
@@ -690,9 +704,10 @@ class SidebarViewController: NSViewController {
                 self.cachedGitStatuses = mergedStatuses
                 self.discoveredRepos = repos
                 GitStatusProvider.applyStatuses(mergedStatuses, to: rootNode, rootURL: rootURL)
-                self.outlineView.reloadData()
                 if let root = self.rootNode {
-                    self.outlineView.expandItem(root)
+                    self.outlineView.reloadItem(root, reloadChildren: true)
+                } else {
+                    self.outlineView.reloadData()
                 }
                 self.updateGitPanel(repos: repos)
             }
@@ -1018,6 +1033,421 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
         return false
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension SidebarViewController {
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let clickedRow = outlineView.clickedRow
+
+        // Handle empty space click (clickedRow == -1)
+        if clickedRow == -1 {
+            // Show only "Open in Finder" pointing to root directory
+            let openInFinderItem = NSMenuItem(
+                title: "Open in Finder",
+                action: #selector(openRootInFinder(_:)),
+                keyEquivalent: ""
+            )
+            openInFinderItem.target = self
+            openInFinderItem.toolTip = "Open root directory in Finder"
+            menu.addItem(openInFinderItem)
+            return
+        }
+
+        // Sync clickedRow with selection if not already selected
+        if clickedRow >= 0, !outlineView.selectedRowIndexes.contains(clickedRow) {
+            outlineView.selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        }
+
+        // Get selected nodes
+        let selectedNodes = selectedFileNodes
+        guard !selectedNodes.isEmpty else { return }
+
+        // Check selection type for menu item enabling
+        let isSingleSelection = selectedNodes.count == 1
+        let isSingleFile = isSingleSelection && !selectedNodes[0].isDirectory
+        let allAreFiles = selectedNodes.allSatisfy { !$0.isDirectory }
+
+        // 1. Preview (enabled for single file only)
+        let previewItem = NSMenuItem(
+            title: "Preview",
+            action: #selector(openPreview(_:)),
+            keyEquivalent: ""
+        )
+        previewItem.target = self
+        previewItem.toolTip = "Preview file content"
+        previewItem.isEnabled = isSingleFile
+        if isSingleFile {
+            previewItem.representedObject = selectedNodes[0].url
+        }
+        menu.addItem(previewItem)
+
+        // Separator between in-app and external actions
+        menu.addItem(NSMenuItem.separator())
+
+        // 2. Open in Finder
+        let openInFinderItem = NSMenuItem(
+            title: isSingleSelection ? "Open in Finder" : "Open \(selectedNodes.count) items in Finder",
+            action: #selector(openSelectedInFinder(_:)),
+            keyEquivalent: ""
+        )
+        openInFinderItem.target = self
+        openInFinderItem.toolTip = "Show selected items in Finder"
+        openInFinderItem.isEnabled = true
+        openInFinderItem.representedObject = selectedNodes.compactMap { $0.url }
+        menu.addItem(openInFinderItem)
+
+        // 3. Open With...
+        let openWithItem = NSMenuItem(
+            title: "Open With...",
+            action: nil,
+            keyEquivalent: ""
+        )
+        openWithItem.toolTip = "Open with another application"
+        openWithItem.isEnabled = allAreFiles
+        if allAreFiles {
+            let submenu = buildOpenWithSubmenu(for: selectedNodes)
+            openWithItem.submenu = submenu
+        }
+        menu.addItem(openWithItem)
+
+        // 4. Send Copy To...
+        let sendCopyItem = NSMenuItem(
+            title: "Send Copy To...",
+            action: #selector(showSendCopyDialog(_:)),
+            keyEquivalent: ""
+        )
+        sendCopyItem.target = self
+        sendCopyItem.toolTip = "Copy selected items to another location"
+        sendCopyItem.isEnabled = true
+        sendCopyItem.representedObject = selectedNodes
+        menu.addItem(sendCopyItem)
+    }
+
+    // MARK: - Context Menu Actions
+
+    @objc private func openPreview(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let url = menuItem.representedObject as? URL else { return }
+        requestPreview(for: url)
+    }
+
+    @objc private func openRootInFinder(_ sender: Any?) {
+        guard let rootURL = rootURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([rootURL])
+    }
+
+    @objc private func openSelectedInFinder(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let urls = menuItem.representedObject as? [URL],
+              !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    @objc private func showSendCopyDialog(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let selectedNodes = menuItem.representedObject as? [FileNode],
+              !selectedNodes.isEmpty else { return }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Copy Here"
+        panel.message = "Choose destination folder for copy"
+        panel.title = "Send Copy To"
+
+        guard let window = view.window else {
+            if panel.runModal() == .OK, let destURL = panel.url {
+                performCopy(selectedNodes: selectedNodes, to: destURL)
+            }
+            return
+        }
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let destURL = panel.url else { return }
+            self?.performCopy(selectedNodes: selectedNodes, to: destURL)
+        }
+    }
+
+    // MARK: - Open With Helper
+
+    private func buildOpenWithSubmenu(for nodes: [FileNode]) -> NSMenu {
+        let submenu = NSMenu()
+        submenu.title = "" // Prevent grey header text
+
+        let urls = nodes.compactMap { $0.url }
+        guard !urls.isEmpty else {
+            addOtherAppItem(to: submenu, fileURLs: urls)
+            return submenu
+        }
+
+        // Find apps that can open all selected files
+        var commonAppURLs: [URL]?
+        for url in urls {
+            let appsForFile = NSWorkspace.shared.urlsForApplications(toOpen: url)
+            if commonAppURLs == nil {
+                commonAppURLs = appsForFile
+            } else {
+                commonAppURLs = commonAppURLs?.filter { appsForFile.contains($0) }
+            }
+        }
+
+        let appURLs = commonAppURLs ?? []
+
+        // Determine default app (only mark if all files share the same default)
+        var defaultAppURL: URL?
+        let firstDefault = NSWorkspace.shared.urlForApplication(toOpen: urls[0])
+        if urls.count == 1 {
+            defaultAppURL = firstDefault
+        } else if let first = firstDefault {
+            let allSameDefault = urls.dropFirst().allSatisfy { url in
+                NSWorkspace.shared.urlForApplication(toOpen: url) == first
+            }
+            defaultAppURL = allSameDefault ? first : nil
+        }
+
+        struct AppInfo {
+            let url: URL
+            let displayName: String
+            let isDefault: Bool
+        }
+
+        // Resolve display names with Bundle cached per app
+        let bundledApps: [(URL, Bundle?, String)] = appURLs.map { appURL in
+            let bundle = Bundle(url: appURL)
+            let localized = bundle?.localizedInfoDictionary
+            let info = bundle?.infoDictionary
+            let name = (localized?["CFBundleDisplayName"] as? String)
+                ?? (info?["CFBundleDisplayName"] as? String)
+                ?? (info?["CFBundleName"] as? String)
+                ?? appURL.lastPathComponent
+            return (appURL, bundle, name)
+        }
+
+        // Disambiguate duplicate names with version, then path
+        var nameCount: [String: Int] = [:]
+        for (_, _, name) in bundledApps { nameCount[name, default: 0] += 1 }
+
+        var appInfos: [AppInfo] = bundledApps.map { (appURL, bundle, name) in
+            var displayName = name
+            if nameCount[name, default: 0] > 1 {
+                if let version = bundle?.infoDictionary?["CFBundleShortVersionString"] as? String {
+                    displayName = "\(name) (\(version))"
+                } else {
+                    let parent = appURL.deletingLastPathComponent().lastPathComponent
+                    displayName = "\(name) — \(parent)"
+                }
+            }
+            let isDefault = (defaultAppURL != nil && appURL == defaultAppURL)
+            return AppInfo(url: appURL, displayName: displayName, isDefault: isDefault)
+        }
+
+        // Sort: default first, then alphabetically
+        appInfos.sort { a, b in
+            if a.isDefault != b.isDefault { return a.isDefault }
+            return a.displayName.localizedStandardCompare(b.displayName) == .orderedAscending
+        }
+
+        // Add menu items
+        let iconSize = NSSize(width: 16, height: 16)
+        for (index, info) in appInfos.enumerated() {
+            let title = info.isDefault ? "\(info.displayName) (預設)" : info.displayName
+            let item = NSMenuItem(title: title, action: #selector(openWithApp(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["appURL": info.url, "fileURLs": urls]
+
+            let icon = NSWorkspace.shared.icon(forFile: info.url.path).copy() as! NSImage
+            icon.size = iconSize
+            item.image = icon
+
+            submenu.addItem(item)
+
+            // Separator after default app
+            if info.isDefault && index < appInfos.count - 1 {
+                submenu.addItem(NSMenuItem.separator())
+            }
+        }
+
+        // "Other..." option
+        if !appInfos.isEmpty {
+            submenu.addItem(NSMenuItem.separator())
+        }
+        addOtherAppItem(to: submenu, fileURLs: urls)
+
+        return submenu
+    }
+
+    private func addOtherAppItem(to menu: NSMenu, fileURLs: [URL]) {
+        let otherItem = NSMenuItem(title: "其他...", action: #selector(openWithOther(_:)), keyEquivalent: "")
+        otherItem.target = self
+        otherItem.representedObject = fileURLs
+        menu.addItem(otherItem)
+    }
+
+    @objc private func openWithOther(_ sender: NSMenuItem) {
+        guard let fileURLs = sender.representedObject as? [URL], !fileURLs.isEmpty else { return }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Open"
+        panel.message = "Choose an application"
+
+        let handler = { (response: NSApplication.ModalResponse) in
+            guard response == .OK, let appURL = panel.url else { return }
+            let config = NSWorkspace.OpenConfiguration()
+            for fileURL in fileURLs {
+                NSWorkspace.shared.open([fileURL], withApplicationAt: appURL, configuration: config, completionHandler: nil)
+            }
+        }
+
+        guard let window = view.window else {
+            let response = panel.runModal()
+            handler(response)
+            return
+        }
+        panel.beginSheetModal(for: window, completionHandler: handler)
+    }
+
+    @objc private func openWithApp(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: Any],
+              let appURL = info["appURL"] as? URL,
+              let fileURLs = info["fileURLs"] as? [URL] else { return }
+
+        // Open each file with the selected app
+        let config = NSWorkspace.OpenConfiguration()
+        for fileURL in fileURLs {
+            NSWorkspace.shared.open([fileURL], withApplicationAt: appURL, configuration: config, completionHandler: nil)
+        }
+    }
+
+    // MARK: - Copy Helper
+
+    private func performCopy(selectedNodes: [FileNode], to destination: URL) {
+        let fileManager = FileManager.default
+
+        // Filter out same-directory copies and destination-inside-source (would recurse)
+        let destStd = destination.standardizedFileURL.path
+        let validNodes = selectedNodes.filter { node in
+            let srcDir = node.url.deletingLastPathComponent().standardizedFileURL.path
+            if srcDir == destStd { return false }
+            // Reject copying a directory into itself or its descendants
+            if node.isDirectory {
+                let srcStd = node.url.standardizedFileURL.path
+                if destStd.hasPrefix(srcStd + "/") || destStd == srcStd { return false }
+            }
+            return true
+        }
+        guard !validNodes.isEmpty else { return }
+
+        // Classify: conflicts vs safe
+        var conflicts: [FileNode] = []
+        var safe: [FileNode] = []
+        var skippedDirs: [String] = []
+        for node in validNodes {
+            let destURL = destination.appendingPathComponent(node.url.lastPathComponent)
+            if fileManager.fileExists(atPath: destURL.path) {
+                if node.isDirectory {
+                    skippedDirs.append(node.url.lastPathComponent)
+                    continue
+                }
+                conflicts.append(node)
+            } else {
+                safe.append(node)
+            }
+        }
+
+        if conflicts.isEmpty {
+            executeCopy(nodes: safe, overwriteNodes: [], skippedDirs: skippedDirs, to: destination)
+            return
+        }
+
+        // Show conflict resolution dialog
+        let alert = NSAlert()
+        alert.messageText = "目標位置已有同名檔案"
+        let conflictNames = conflicts.map { $0.url.lastPathComponent }.joined(separator: "\n")
+        alert.informativeText = "以下 \(conflicts.count) 個檔案已存在：\n\(conflictNames)"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "覆蓋全部")
+        alert.addButton(withTitle: "跳過已存在")
+        alert.addButton(withTitle: "取消")
+        alert.buttons[0].hasDestructiveAction = true
+
+        let handler = { [weak self] (response: NSApplication.ModalResponse) in
+            switch response {
+            case .alertFirstButtonReturn:
+                self?.executeCopy(nodes: safe, overwriteNodes: conflicts, skippedDirs: skippedDirs, to: destination)
+            case .alertSecondButtonReturn:
+                self?.executeCopy(nodes: safe, overwriteNodes: [], skippedDirs: skippedDirs, to: destination)
+            default:
+                break
+            }
+        }
+
+        guard let window = view.window else {
+            let response = alert.runModal()
+            handler(response)
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: handler)
+    }
+
+    private func executeCopy(nodes: [FileNode], overwriteNodes: [FileNode], skippedDirs: [String], to destination: URL) {
+        let fileManager = FileManager.default
+        var errors: [(String, String)] = []
+
+        let allNodes: [(node: FileNode, overwrite: Bool)] =
+            overwriteNodes.map { ($0, true) } + nodes.map { ($0, false) }
+
+        for (node, overwrite) in allNodes {
+            let sourceURL = node.url
+            let destURL = destination.appendingPathComponent(sourceURL.lastPathComponent)
+            do {
+                if overwrite {
+                    try fileManager.removeItem(at: destURL)
+                }
+                try fileManager.copyItem(at: sourceURL, to: destURL)
+            } catch {
+                errors.append((sourceURL.lastPathComponent, error.localizedDescription))
+            }
+        }
+
+        // Report skipped directories and IO errors
+        var messages: [String] = []
+        if !skippedDirs.isEmpty {
+            messages.append("已跳過同名目錄：\n" + skippedDirs.joined(separator: "\n"))
+        }
+        if !errors.isEmpty {
+            messages.append("複製失敗：\n" + errors.map { "\($0.0): \($0.1)" }.joined(separator: "\n"))
+        }
+        if !messages.isEmpty {
+            showErrorAlert(
+                title: errors.isEmpty ? "部分項目已跳過" : "部分檔案複製失敗",
+                message: messages.joined(separator: "\n\n")
+            )
+        }
+    }
+
+    private func showErrorAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        guard let window = view.window else {
+            alert.runModal()
+            return
+        }
+        alert.beginSheetModal(for: window)
     }
 }
 
