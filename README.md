@@ -8,30 +8,38 @@ Spectra is a native macOS terminal built on [libghostty](https://github.com/ghos
 
 **[Website](https://spectra.librefox.app)** | **[Download](https://github.com/jerell2isekai/spectra/releases/latest)** | **[Docs](https://spectra.librefox.app/en/installation/)**
 
-## What you get
+## Features
 
-- **Split Panes** — Split horizontally or vertically. Drag to resize. Each pane holds its own tabs.
-- **File Sidebar** — Browse files, see Git status, toggle dotfiles, click to preview.
-- **GPU Rendering** — Metal-based rendering via libghostty. Smooth scrolling, sharp text, low latency.
-- **Layout Workspace** — Save pane arrangements by name. Switch between setups in one click.
-- **Guide Sync** — Manage AGENTS.md and CLAUDE.md centrally. Sync to any project.
-- **Rich Preview** — Markdown, JSON, HTML, PDF, and images previewed in-window.
-- **Settings Panel** — Theme, font, opacity, blur, cursor style — all in a visual panel.
-- **Native macOS** — Pure AppKit. No Electron. Follows system appearance.
+**Split panes** — Horizontal or vertical. Drag to resize. Each pane has its own tabs.
+
+**File sidebar** — Browse files, see Git status, toggle dotfiles. Click to preview, right-click to Open With or Send Copy To another folder.
+
+**VS Code themes** — Import VS Code color schemes for the app chrome. The terminal uses Ghostty's own theme system, so they work independently.
+
+**GPU rendering** — Metal via libghostty. Smooth scrolling, sharp text, low latency.
+
+**Saved layouts** — Name your pane arrangement, recall it later with one click.
+
+**Guide sync** — Manage AGENTS.md and CLAUDE.md files from one place, push to any project.
+
+**In-window preview** — Markdown, JSON, HTML, PDF, and images open right in the terminal, no external app needed.
+
+**Settings panel** — Theme, font, opacity, blur, cursor style — all in one place, no config file editing.
+
+**Native AppKit** — No Electron. Uses system appearance. Feels like it belongs on your Mac.
 
 ## Requirements
 
-- macOS 14 Sonoma or later
-- GPU with Metal support
+macOS 14 Sonoma or later, Metal-capable GPU.
 
 ## Install
 
-Download the latest release from [GitHub Releases](https://github.com/jerell2isekai/spectra/releases/latest).
+Download from [GitHub Releases](https://github.com/jerell2isekai/spectra/releases/latest).
 
 ## Acknowledgments
 
-Terminal rendering powered by [libghostty](https://github.com/ghostty-org/ghostty) from the [Ghostty](https://ghostty.org) project. Thanks to Mitchell Hashimoto and the Ghostty team.
+Terminal rendering by [libghostty](https://github.com/ghostty-org/ghostty). Thanks to Mitchell Hashimoto and the Ghostty team.
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+See [LICENSE](LICENSE).
