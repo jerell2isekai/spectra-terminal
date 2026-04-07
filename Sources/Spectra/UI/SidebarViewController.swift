@@ -1157,6 +1157,7 @@ extension SidebarViewController {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Copy Here"
         panel.message = "Choose destination folder for copy"
